@@ -2,6 +2,8 @@ package com.sasch.cameragps.sharednew.bluetooth.coordinator
 
 import com.sasch.cameragps.sharednew.bluetooth.session.CameraAutoCorrectionSetting
 import com.sasch.cameragps.sharednew.bluetooth.session.CameraSettingState
+import com.sasch.cameragps.sharednew.bluetooth.SonyBluetoothConstants
+import kotlin.time.TimeMark
 
 /**
  * Platform abstraction over BLE GATT I/O operations.
@@ -13,6 +15,12 @@ import com.sasch.cameragps.sharednew.bluetooth.session.CameraSettingState
  * All identifiers are uppercase MAC addresses (Android) or UUID strings (iOS).
  */
 interface BleGattPort {
+    /** A queued fix must expire even if other camera commands delay its write. */
+    fun writeLocation(identifier: String, value: ByteArray, validUntil: TimeMark): Boolean =
+        !validUntil.hasPassedNow() && writeCharacteristic(
+            identifier, SonyBluetoothConstants.CHARACTERISTIC_UUID, value
+        )
+
     /**
      * Write [value] to the characteristic identified by [characteristicUuid] on device [identifier].
      * Returns `true` if the write was successfully enqueued.

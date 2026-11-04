@@ -9,12 +9,17 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlin.time.TimeMark
 
 /**
  * A single BLE operation to be executed sequentially on one device.
  */
 sealed interface BleOperation {
-    data class Write(val characteristicUuid: String, val value: ByteArray) : BleOperation
+    data class Write(
+        val characteristicUuid: String,
+        val value: ByteArray,
+        val validUntil: TimeMark? = null,
+    ) : BleOperation
     data class Read(val characteristicUuid: String) : BleOperation
     data class Subscribe(val characteristicUuid: String, val enable: Boolean) : BleOperation
     data object DiscoverServices : BleOperation
@@ -68,7 +73,7 @@ class BleOperationQueue(
             for (queued in channel) {
                 if (queued.result.isCompleted) continue // cancelled while parked
 
-                if (!shouldExecute(identifier, queued.operation)) {
+                if (!isEligible(identifier, queued.operation)) {
                     queued.result.complete(BleOperationResult.Cancelled)
                     continue
                 }
@@ -167,6 +172,10 @@ class BleOperationQueue(
         val id = identifier.uppercase()
         return lanes.getOrPut(id) { DeviceLane(id) }
     }
+
+    private fun isEligible(identifier: String, operation: BleOperation): Boolean =
+        !(operation is BleOperation.Write && operation.validUntil?.hasPassedNow() == true) &&
+            shouldExecute(identifier, operation)
 
     private fun initiate(identifier: String, op: BleOperation): Boolean = when (op) {
         is BleOperation.Write ->

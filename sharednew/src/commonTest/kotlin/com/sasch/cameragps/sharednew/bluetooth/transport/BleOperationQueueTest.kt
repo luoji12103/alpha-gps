@@ -9,10 +9,12 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class BleOperationQueueTest {
@@ -34,6 +36,20 @@ class BleOperationQueueTest {
 
     @BeforeTest fun silenceLogs() { KmLogging.setLoggers() }
     @AfterTest fun restoreLogs() { KmLogging.setLoggers(PlatformLogger(FixedLogLevel(true))) }
+
+    @Test
+    fun expiredLocationIsDroppedAfterWaitingBehindAnotherOperation() = runTest {
+        val transport = Transport()
+        val queue = BleOperationQueue(transport, backgroundScope)
+        queue.enqueue("A", BleOperation.Write("first", byteArrayOf(1)))
+        runCurrent()
+        queue.enqueue("A", BleOperation.Write("location", byteArrayOf(2),
+            testScheduler.timeSource.markNow() + 1_000.milliseconds))
+        advanceTimeBy(1_001)
+        queue.onTransportEvent(BleTransportEvent.CharacteristicWritten("A", "first", BleOperationStatus.Success))
+        runCurrent()
+        assertEquals(listOf("first"), transport.writes)
+    }
 
     @Test
     fun cancelledParkedWifiStartNeverExecutesButInflightWriteDrains() = runTest {

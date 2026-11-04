@@ -6,6 +6,7 @@ import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperation
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperationQueue
 import com.sasch.cameragps.sharednew.bluetooth.transport.BlePeripheralTransport
 import com.sasch.cameragps.sharednew.remote.wifi.WifiBootstrapBlePort
+import kotlin.time.TimeMark
 
 /**
  * The single [BleGattPort] implementation, backed by the sequential
@@ -21,6 +22,11 @@ internal class QueuedBleGattPort(
 
     override suspend fun execute(identifier: String, operation: BleOperation) =
         queue.execute(identifier.uppercase(), operation)
+
+    override fun writeLocation(identifier: String, value: ByteArray, validUntil: TimeMark): Boolean =
+        queue.enqueue(identifier.uppercase(), BleOperation.Write(
+            SonyBluetoothConstants.CHARACTERISTIC_UUID, value, validUntil
+        ))
 
     override fun setAutoCorrectionState(
         identifier: String,
