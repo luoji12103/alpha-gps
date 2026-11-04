@@ -10,6 +10,9 @@ interface LogDao {
     @Insert
     suspend fun insertLog(logEntry: LogEntry)
 
+    @Insert
+    suspend fun insertLogs(logEntries: List<LogEntry>)
+
     @Query("SELECT * FROM log_entries ORDER BY timestamp DESC")
     fun getAllLogs(): Flow<List<LogEntry>>
 

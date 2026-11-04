@@ -14,7 +14,7 @@ import java.util.Date
 import java.util.Locale
 
 class FileTree(context: Context, private val minPriority: Int) : Timber.Tree() {
-    private val logRepository = LogRepository(getDatabaseBuilder(context))
+    init { initialize(context.applicationContext) }
 
     companion object {
         @Volatile
@@ -73,11 +73,8 @@ class FileTree(context: Context, private val minPriority: Int) : Timber.Tree() {
      * @param t Accompanying exceptions. May be `null`, but then `message` will not be.
      */
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
-        val timestamp = System.currentTimeMillis()
-        val exception = t?.stackTraceToString()
-
         if (priority >= minPriority) {
-            logRepository.insertLog(timestamp, priority, tag, message, exception)
+            logRepository?.insertLog(System.currentTimeMillis(), priority, tag, message, t?.stackTraceToString())
         }
     }
 }
