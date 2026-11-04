@@ -25,8 +25,8 @@ object LocationPacketBuilder {
         latitude: Double,
         longitude: Double,
         timeZoneInfo: PlatformTimeZoneInfo,
+        now: Instant = Clock.System.now(),
     ): ByteArray {
-        val now = Clock.System.now()
         val utc = now.toLocalDateTime(TimeZone.UTC)
 
         val latE7 = (latitude * 1.0E7).toInt()

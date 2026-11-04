@@ -56,7 +56,7 @@ class LocationTransmissionManager(
 
     private val _isActive = MutableStateFlow(false)
 
-    /** `true` while location updates and the periodic loop are running. */
+    /** `true` while the location source is running, even when awaiting a usable fix. */
     val isActive: StateFlow<Boolean> = _isActive
 
     private val _isTransmitting = MutableStateFlow(false)
@@ -124,11 +124,12 @@ class LocationTransmissionManager(
                 reportUnavailable()
             }
         }
-        scheduleResend()
+        startResendIfNeeded()
     }
 
-    private fun scheduleResend() {
-        periodicJob?.cancel()
+    private fun startResendIfNeeded() {
+        // Location callbacks must not keep postponing the camera's refresh.
+        if (periodicJob?.isActive == true) return
         periodicJob = scope.launch {
             while (isActive) {
                 delay(policy.resendIntervalMs.milliseconds)
@@ -139,10 +140,9 @@ class LocationTransmissionManager(
                         .onFailure { log.e(it, msg = { "Error sending location" }) }
                 } else {
                     reportUnavailable()
+                    // Wait for a usable callback instead of polling an absent/stale fix.
+                    break
                 }
-                // Minute mode is driven by fresh callbacks. One fallback is enough;
-                // each new fix re-arms it so it cannot race normal minute updates.
-                if (policy.sendOnUpdate) break
             }
         }
     }
@@ -180,17 +180,29 @@ class LocationTransmissionManager(
         val current = latest
         if (!shouldUpdateLocation(location, current?.location)) return
 
+        val remainingMs = policy.maxFixAgeMs - (now - location.timestampMillis)
+        // A repeated provider cache entry is still the same sample. In particular,
+        // a wall-clock correction must not renew its monotonic lifetime.
+        val deadline = if (current?.location?.timestampMillis == location.timestampMillis) {
+            current.validUntil
+        } else {
+            timeSource.markNow() + remainingMs.milliseconds
+        }
+        val fix = CachedFix(location, deadline)
+        if (!isFreshFix(fix)) return
         val hadLocationBefore = hasSessionLocation
         hasSessionLocation = true
         reportedUnavailable = false
-        val remainingMs = policy.maxFixAgeMs - (now - location.timestampMillis)
-        val fix = CachedFix(location, timeSource.markNow() + remainingMs.milliseconds)
         latest = fix
-        if (policy.sendOnUpdate) scheduleResend()
+        startResendIfNeeded()
         expiryJob?.cancel()
         expiryJob = scope.launch {
-            delay(remainingMs.milliseconds)
-            if (latest === fix && !isFreshFix(fix)) reportUnavailable()
+            delay(-fix.validUntil.elapsedNow())
+            if (latest === fix && !isFreshFix(fix)) {
+                reportUnavailable()
+                periodicJob?.cancel()
+                periodicJob = null
+            }
         }
 
         // Send right away when there was no usable fix yet; otherwise the
@@ -231,8 +243,19 @@ class LocationTransmissionManager(
             location.latitude,
             location.longitude,
             PlatformTimeZoneInfo(),
+            now = clock.now(),
         )
-        val queued = port.writeLocation(identifier, packet, fix.validUntil)
+        // A refresh has no value after the next refresh is due. Bound parked
+        // packets by both the sample lifetime and one refresh interval, so a
+        // blocked GATT lane cannot later flush a burst of old coordinates/times.
+        val timeUntilExpiry = -fix.validUntil.elapsedNow()
+        val refreshInterval = policy.resendIntervalMs.milliseconds
+        val packetDeadline = if (timeUntilExpiry > refreshInterval) {
+            fix.validUntil - (timeUntilExpiry - refreshInterval)
+        } else {
+            fix.validUntil
+        }
+        val queued = port.writeLocation(identifier, packet, packetDeadline)
         if (queued && _isActive.value) {
             lastSent[identifier] = timeSource.markNow()
             _isTransmitting.value = true

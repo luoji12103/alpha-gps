@@ -52,6 +52,27 @@ class BleOperationQueueTest {
     }
 
     @Test
+    fun blockedLaneResumesWithOnlyTheUnexpiredCameraRefresh() = runTest {
+        val transport = Transport()
+        val queue = BleOperationQueue(transport, backgroundScope)
+        queue.enqueue("A", BleOperation.Write("first", byteArrayOf(1)))
+        runCurrent()
+        repeat(3) {
+            queue.enqueue("A", BleOperation.Write("location", byteArrayOf(it.toByte()),
+                testScheduler.timeSource.markNow() + 5_000.milliseconds))
+            advanceTimeBy(if (it < 2) 5_000 else 4_999)
+            runCurrent()
+        }
+        assertEquals(listOf("first"), transport.writes)
+        queue.onTransportEvent(BleTransportEvent.CharacteristicWritten("A", "first", BleOperationStatus.Success))
+        runCurrent()
+        assertEquals(listOf("first", "location"), transport.writes)
+        queue.onTransportEvent(BleTransportEvent.CharacteristicWritten("A", "location", BleOperationStatus.Success))
+        runCurrent()
+        assertEquals(listOf("first", "location"), transport.writes)
+    }
+
+    @Test
     fun cancelledParkedWifiStartNeverExecutesButInflightWriteDrains() = runTest {
         val transport = Transport()
         val queue = BleOperationQueue(transport, backgroundScope)

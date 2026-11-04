@@ -20,6 +20,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlin.time.TimeMark
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LocationFreshnessTest {
@@ -107,6 +108,22 @@ class LocationFreshnessTest {
         assertEquals(count, f.port.writes.size)
     }
 
+    @Test fun repeatedCachedCallbackCannotRenewLifetimeAfterBackwardClockChange() = runTest {
+        val f = Fixture(this)
+        f.start()
+        f.emit()
+        advanceTimeBy(10_000)
+        f.wallOffset = -10_000
+        f.emit() // The provider returns the original timestamp again.
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertFalse(f.manager.isTransmitting.value)
+        val count = f.port.writes.size
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(count, f.port.writes.size)
+    }
+
     @Test fun forwardClockChangeRejectsCachedFixOnNextSend() = runTest {
         val f = Fixture(this)
         f.start()
@@ -164,8 +181,16 @@ class LocationFreshnessTest {
 
     internal class Port : BleGattPort {
         val writes = mutableListOf<String>()
+        val packets = mutableListOf<ByteArray>()
+        val deadlines = mutableListOf<TimeMark>()
+        override fun writeLocation(identifier: String, value: ByteArray, validUntil: TimeMark): Boolean {
+            if (validUntil.hasPassedNow()) return false
+            deadlines += validUntil
+            return writeCharacteristic(identifier, "location", value)
+        }
         override fun writeCharacteristic(identifier: String, characteristicUuid: String, value: ByteArray): Boolean {
             writes += identifier
+            packets += value.copyOf()
             return true
         }
         override fun subscribeToNotifications(identifier: String, characteristicUuid: String) = true
