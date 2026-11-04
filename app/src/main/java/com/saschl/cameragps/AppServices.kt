@@ -43,7 +43,7 @@ class AppServices(context: Context) {
 
     val bluetoothManager: BluetoothManager = appContext.getSystemService()!!
 
-    val transport = AndroidBleTransport(appContext, bluetoothManager)
+    val transport = AndroidBleTransport(appContext, bluetoothManager, scope)
 
     val orchestrator = CameraSessionOrchestrator(
         transport = transport,

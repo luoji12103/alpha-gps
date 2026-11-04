@@ -7,14 +7,17 @@ class ServicePresenceCoordinator(
     private val onShutdownRequested: () -> Unit,
 ) {
     private val disappearedDevices = mutableSetOf<String>()
+    private val presentDevices = mutableSetOf<String>()
 
     fun onDeviceAppeared(address: String) {
         disappearedDevices.remove(address.uppercase())
+        presentDevices.add(address.uppercase())
     }
 
     suspend fun onDeviceDisappeared(address: String) {
         val id = address.uppercase()
         disappearedDevices.add(id)
+        presentDevices.remove(id)
         stopIfDisconnectedAndAbsent(id)
     }
 
@@ -26,10 +29,10 @@ class ServicePresenceCoordinator(
         // Intentionally retain the service for reconnection if CDM never reports disappearance.
         // TODO: Consider tracking Android 16+ BLE_DISAPPEARED and BT_DISCONNECTED separately,
         // retaining legacy handling on older Android and GATT state as the transmission authority.
-        if (address !in disappearedDevices || hasConnectedDevices()) return
+        if (address !in disappearedDevices || presentDevices.isNotEmpty() || hasConnectedDevices()) return
         if (hasAlwaysOnDevices()) return
         // GATT callbacks can update connection state while the database read suspends.
-        if (!hasConnectedDevices()) {
+        if (presentDevices.isEmpty() && !hasConnectedDevices()) {
             onShutdownRequested()
         }
     }

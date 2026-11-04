@@ -15,10 +15,15 @@ import android.os.Build
 import androidx.annotation.RequiresPermission
 import com.sasch.cameragps.sharednew.bluetooth.SonyBluetoothConstants
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperationStatus
-import com.sasch.cameragps.sharednew.bluetooth.transport.BleInitiationResult
 import com.sasch.cameragps.sharednew.bluetooth.transport.BlePeripheralTransport
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleTransportEvent
+import com.sasch.cameragps.sharednew.bluetooth.transport.BleInitiationResult
+import com.saschl.cameragps.service.coordinator.ServiceConnectionControl
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import timber.log.Timber
@@ -40,7 +45,8 @@ import java.util.UUID
 class AndroidBleTransport(
     private val context: Context,
     private val bluetoothManager: BluetoothManager,
-) : BlePeripheralTransport {
+    private val scope: CoroutineScope,
+) : BlePeripheralTransport, ServiceConnectionControl {
 
     private companion object {
         // BluetoothStatusCodes.ERROR_DEVICE_NOT_CONNECTED is hidden from the public SDK.
@@ -56,6 +62,9 @@ class AndroidBleTransport(
 
         @Volatile
         var mtu = 23
+        var priorityTimeout: Job? = null
+        @Volatile
+        var highPriority = false
     }
 
     /** Uppercased MAC → connection. Entries survive disconnects (autoConnect). */
@@ -65,7 +74,7 @@ class AndroidBleTransport(
     private val pendingSubscribeEnable =
         Collections.synchronizedMap(mutableMapOf<String, Boolean>())
 
-    fun connect(mac: String): Boolean {
+    override fun connect(mac: String): Boolean {
         val address = mac.uppercase()
         if (connections.containsKey(address)) {
             return true
@@ -107,12 +116,15 @@ class AndroidBleTransport(
     /** `true` if a GATT handle exists for this device (connected or waiting for autoConnect). */
     fun hasConnection(mac: String): Boolean = connections.containsKey(mac.uppercase())
 
+    override fun hasConnections(): Boolean = connections.isNotEmpty()
+
     @RequiresPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
-    fun disconnectAll() {
+    override fun disconnectAll() {
         val snapshot: List<Connection> = synchronized(connections) {
             connections.values.toList().also { connections.clear() }
         }
         snapshot.forEach { connection ->
+            connection.priorityTimeout?.cancel()
             runCatching {
                 try {
                     connection.gatt.disconnect()
@@ -121,24 +133,30 @@ class AndroidBleTransport(
                 }
             }.onFailure { Timber.w(it) }
         }
+        pendingSubscribeEnable.clear()
     }
 
     /**
-     * Mark a device inactive without closing the GATT (autoConnect keeps
-     * listening for the camera). Emits a synthetic Disconnected event so the
-     * orchestrator clears the session.
+     * Explicit stop/disable: close only this handle. Ordinary link loss retains
+     * autoConnect, and CDM disappearance is handled separately by the service.
      */
-    fun pauseDevice(mac: String) {
+    @SuppressLint("MissingPermission")
+    override fun pauseDevice(mac: String) {
         val address = mac.uppercase()
-        val connection = connections[address] ?: return
-        if (connection.isActive) {
-            connection.isActive = false
-            eventChannel.trySend(BleTransportEvent.Disconnected(address, statusCode = null))
+        val connection = connections.remove(address) ?: return
+        connection.priorityTimeout?.cancel()
+        connection.isActive = false
+        synchronized(pendingSubscribeEnable) {
+            pendingSubscribeEnable.keys.removeAll { it.startsWith("$address:") }
         }
+        runCatching {
+            try { connection.gatt.disconnect() } finally { connection.gatt.close() }
+        }.onFailure { Timber.w(it, "Could not close stopped camera connection") }
+        eventChannel.trySend(BleTransportEvent.Disconnected(address, statusCode = null))
     }
 
     /** Number of devices with a live (resumed) connection. */
-    fun connectedCount(): Int = synchronized(connections) {
+    override fun connectedCount(): Int = synchronized(connections) {
         connections.values.count { it.isActive }
     }
 
@@ -150,6 +168,10 @@ class AndroidBleTransport(
     @SuppressLint("MissingPermission")
     fun relaxConnection(mac: String) {
         val connection = connections[mac.uppercase()] ?: return
+        connection.priorityTimeout?.cancel()
+        connection.priorityTimeout = null
+        if (!connection.highPriority) return
+        connection.highPriority = false
         if (!connection.isActive) return
         if (!connection.gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)) {
             Timber.w("Could not relax connection priority for %s", mac)
@@ -270,10 +292,11 @@ class AndroidBleTransport(
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             val address = gatt.device.address.uppercase()
+            val connection = connections[address]?.takeIf { it.gatt === gatt } ?: return
 
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 Timber.i("Connected to device with status %d", status)
-                connections[address]?.isActive = true
+                connection.isActive = true
                 // Discovery + handshake are dozens of sequential ATT round trips,
                 // each costing one connection interval (~50ms at the default).
                 // Request the short interval for setup; relaxConnection() drops
@@ -281,13 +304,24 @@ class AndroidBleTransport(
                 if (!gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)) {
                     Timber.w("Could not request high connection priority for %s", address)
                 }
+                connection.highPriority = true
+                scope.launch {
+                    if (connections[address] !== connection || !connection.isActive) return@launch
+                    connection.priorityTimeout?.cancel()
+                    connection.priorityTimeout = scope.launch {
+                        delay(60_000)
+                        if (connections[address] === connection) relaxConnection(address)
+                    }
+                }
                 eventChannel.trySend(BleTransportEvent.Connected(address))
                 return
             }
 
             if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
-                connections[address]?.isActive = false
-                connections[address]?.mtu = 23
+                connection.isActive = false
+                connection.highPriority = false
+                connection.mtu = 23
+                connection.priorityTimeout?.cancel()
                 if (status == 19 || status == 8 || status == 0) {
                     Timber.i("Device disconnected in callback with status: $status")
                 } else {
@@ -321,6 +355,7 @@ class AndroidBleTransport(
          }*/
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (!isCurrentGatt(gatt)) return
             Timber.i("MTU changed for %s: mtu=%d status=%d", gatt.device.address, mtu, status)
             val address = gatt.device.address.uppercase()
             if (status == BluetoothGatt.GATT_SUCCESS) connections[address]?.mtu = mtu
@@ -328,6 +363,7 @@ class AndroidBleTransport(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (!isCurrentGatt(gatt)) return
             Timber.i("Services discovered for ${gatt.device.address} with status $status")
             eventChannel.trySend(
                 BleTransportEvent.ServicesDiscovered(
@@ -342,6 +378,7 @@ class AndroidBleTransport(
             characteristic: BluetoothGattCharacteristic?,
             status: Int,
         ) {
+            if (!isCurrentGatt(gatt)) return
             val uuid = characteristic?.uuid?.toString() ?: return
             eventChannel.trySend(
                 BleTransportEvent.CharacteristicWritten(
@@ -382,6 +419,7 @@ class AndroidBleTransport(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
+            if (!isCurrentGatt(gatt)) return
             Timber.d("Characteristic changed: %s, bytes=%d", characteristic.uuid, value.size)
             eventChannel.trySend(
                 BleTransportEvent.CharacteristicChanged(
@@ -397,6 +435,7 @@ class AndroidBleTransport(
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
+            if (!isCurrentGatt(gatt)) return
             val address = gatt.device.address.uppercase()
             val characteristicUuid = descriptor.characteristic.uuid.toString()
             Timber.d("Descriptor write completed for ${gatt.device.address} with status $status")
@@ -419,6 +458,7 @@ class AndroidBleTransport(
             value: ByteArray,
             status: Int,
         ) {
+            if (!isCurrentGatt(gatt)) return
             Timber.d("Read response for %s with status %d", characteristic.uuid, status)
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Timber.w(
@@ -440,6 +480,10 @@ class AndroidBleTransport(
     // ---------------------------------------------------------------------------
     // Helpers (write compat absorbed from the former BluetoothGattUtils)
     // ---------------------------------------------------------------------------
+
+    @SuppressLint("MissingPermission")
+    private fun isCurrentGatt(gatt: BluetoothGatt): Boolean =
+        connections[gatt.device.address.uppercase()]?.gatt === gatt
 
     private fun statusOf(status: Int): BleOperationStatus = when (status) {
         BluetoothGatt.GATT_SUCCESS -> BleOperationStatus.Success

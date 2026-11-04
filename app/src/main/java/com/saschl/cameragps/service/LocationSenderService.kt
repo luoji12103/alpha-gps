@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import androidx.annotation.RequiresPermission
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -25,6 +24,8 @@ import com.saschl.cameragps.service.coordinator.ServiceShutdownCoordinator
 import com.saschl.cameragps.service.transport.AndroidBleTransport
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import com.sasch.cameragps.sharednew.bluetooth.BleSessionPhase
+import com.saschl.cameragps.utils.PreferencesManager
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -108,6 +109,12 @@ class LocationSenderService : LifecycleService() {
 
         lifecycleScope.launch {
             orchestrator.events.collect { event -> handleEvent(event) }
+        }
+        lifecycleScope.launch {
+            orchestrator.sessions.collect { sessions ->
+                sessions.values.filter { it.phase == BleSessionPhase.Error }
+                    .forEach { transport.relaxConnection(it.identifier) }
+            }
         }
         transmissionNotificationJob = TransmissionNotificationCoordinator(
             scope = lifecycleScope,
@@ -203,6 +210,7 @@ class LocationSenderService : LifecycleService() {
             }
 
             is OrchestratorEvent.PairingFailed -> {
+                transport.relaxConnection(event.identifier)
                 // Pairing-failure UI state is tracked in AppServices
                 Timber.e("Pairing failed for ${event.identifier}")
             }
@@ -227,6 +235,7 @@ class LocationSenderService : LifecycleService() {
             }
 
             is ServiceCommand.ReconnectAlwaysOn -> {
+                ensureBluetoothStateReceiver()
                 shutdownCoordinator.handleNoAddress(startId)
             }
 
@@ -271,16 +280,23 @@ class LocationSenderService : LifecycleService() {
             }
 
             is ServiceCommand.Connect -> {
+                if (!PreferencesManager.isAppEnabled(this) || !services.deviceDao.isDeviceEnabled(command.address)) {
+                    transport.pauseDevice(command.address)
+                    presenceCoordinator.onDeviceDisappeared(command.address)
+                    return
+                }
                 presenceCoordinator.onDeviceAppeared(command.address)
                 ensureBluetoothStateReceiver()
                 if (!transport.hasConnection(command.address)) {
                     Timber.i("Service initialized")
                     orchestrator.onConnectRequested(command.address)
-                    runCatching {
-                        transport.connect(command.address)
-                    }.onFailure {
+                    val connected = runCatching { transport.connect(command.address) }
+                        .onFailure { Timber.w(it, "Camera connection request failed") }
+                        .getOrDefault(false)
+                    if (!connected) {
                         Timber.e("Failed to connect to device, bluetooth is likely turned off")
                         orchestrator.onConnectFailed(command.address)
+                        presenceCoordinator.onDeviceDisappeared(command.address)
                     }
                 }
             }
@@ -321,7 +337,6 @@ class LocationSenderService : LifecycleService() {
         return true
     }
 
-    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun requestShutdown(startId: Int? = null) {
         if (startId != null) stopSelf(startId) else stopSelf()
     }

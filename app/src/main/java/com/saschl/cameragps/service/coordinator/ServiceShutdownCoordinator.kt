@@ -3,12 +3,11 @@ package com.saschl.cameragps.service.coordinator
 import android.annotation.SuppressLint
 import com.sasch.cameragps.sharednew.database.devices.CameraDevice
 import com.sasch.cameragps.sharednew.database.devices.CameraDeviceDAO
-import com.saschl.cameragps.service.transport.AndroidBleTransport
 import timber.log.Timber
 
 class ServiceShutdownCoordinator(
     private val deviceDao: CameraDeviceDAO,
-    private val transport: AndroidBleTransport,
+    private val transport: ServiceConnectionControl,
     private val onShutdownRequested: (Int?) -> Unit,
 ) {
     @SuppressLint("MissingPermission")
@@ -21,13 +20,14 @@ class ServiceShutdownCoordinator(
 
         runCatching {
             deviceDao.getAllCameraDevices()
-                .filter { it.alwaysOnEnabled }
+                .filter { it.deviceEnabled && it.alwaysOnEnabled }
                 .forEach { device ->
-                    runCatching {
-                        transport.connect(device.mac)
-                    }.onFailure { handleGattConnectionFailure(startId, device) }
+                    val accepted = runCatching { transport.connect(device.mac) }.getOrDefault(false)
+                    if (!accepted) handleGattConnectionFailure(startId, device)
                 }
         }
+        // A rejected request has no autoConnect handle and cannot recover by waiting.
+        if (!transport.hasConnections()) onShutdownRequested(startId)
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -45,10 +45,10 @@ class ServiceShutdownCoordinator(
         }
 
         // Always-on devices retain their connection until the setting is disabled.
-        if (!deviceDao.isDeviceAlwaysOnEnabled(address)) {
+        if (!deviceDao.isDeviceEnabled(address) || !deviceDao.isDeviceAlwaysOnEnabled(address)) {
             transport.pauseDevice(address)
         }
-        if (transport.connectedCount() == 0 && deviceDao.getAlwaysOnEnabledDeviceCount() == 0) {
+        if (!transport.hasConnections() && deviceDao.getAlwaysOnEnabledDeviceCount() == 0) {
             Timber.d("No connected or always on cameras remaining, shutting down service")
             onShutdownRequested(startId)
         }

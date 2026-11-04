@@ -9,6 +9,18 @@ import org.junit.Test
 
 class ServicePresenceCoordinatorTest {
     @Test
+    fun `departed camera cannot stop service while another present camera is still connecting`() = runBlocking {
+        val fixture = Fixture()
+        fixture.coordinator.onDeviceAppeared(CAMERA)
+        fixture.coordinator.onDeviceAppeared(OTHER_CAMERA)
+        fixture.coordinator.onDeviceDisappeared(CAMERA)
+        fixture.coordinator.onDeviceDisconnected(CAMERA)
+        assertEquals(0, fixture.shutdowns)
+        fixture.coordinator.onDeviceDisappeared(OTHER_CAMERA)
+        assertEquals(1, fixture.shutdowns)
+    }
+
+    @Test
     fun `camera can stop advertising and keep transmitting until GATT disconnects`() = runBlocking {
         val fixture = Fixture()
         fixture.coordinator.onDeviceAppeared(CAMERA)
