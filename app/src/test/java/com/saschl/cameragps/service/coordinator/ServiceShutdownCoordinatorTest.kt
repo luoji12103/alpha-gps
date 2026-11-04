@@ -9,6 +9,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ServiceShutdownCoordinatorTest {
+    @Test fun normalizedAllShutdownClosesEveryNonAlwaysOnConnection() = runBlocking {
+        val f = Fixture(listOf(CameraDevice("A"), CameraDevice("B")))
+        f.transport.handles.addAll(listOf("A", "B"))
+        // ServiceCommandRouter normalizes every address, including this sentinel.
+        f.coordinator.handleShutdownRequest("ALL", 1)
+        assertFalse(f.transport.hasConnections())
+        assertEquals(1, f.shutdowns)
+    }
+
     @Test fun disabledAlwaysOnCameraReleasesItsHandleWithoutStoppingOtherCamera() = runBlocking {
         val f = Fixture(listOf(CameraDevice("A", deviceEnabled = false, alwaysOnEnabled = true), CameraDevice("B")))
         f.transport.handles.addAll(listOf("A", "B"))

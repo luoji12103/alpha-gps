@@ -17,6 +17,7 @@ class RebootReceiver : BroadcastReceiver() {
                 PreferencesManager.getAutoStartAfterBootEnabled(context)
             }"
         )
+        if (!PreferencesManager.isAppEnabled(context)) return
         if (!LocationSenderService.hasLocationPermission(context)) {
             Timber.e("Location permission missing, not starting LocationSenderService")
             return

@@ -39,7 +39,7 @@ class ServiceShutdownCoordinator(
     suspend fun handleShutdownRequest(address: String, startId: Int) {
         Timber.i("Shutdown requested for device $address")
 
-        if (address == "all") {
+        if (address.equals("all", ignoreCase = true)) {
             handleShutdownAllDevices(startId)
             return
         }

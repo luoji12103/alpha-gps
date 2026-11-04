@@ -235,6 +235,10 @@ class LocationSenderService : LifecycleService() {
             }
 
             is ServiceCommand.ReconnectAlwaysOn -> {
+                if (!PreferencesManager.isAppEnabled(this)) {
+                    requestShutdown(startId)
+                    return
+                }
                 ensureBluetoothStateReceiver()
                 shutdownCoordinator.handleNoAddress(startId)
             }
