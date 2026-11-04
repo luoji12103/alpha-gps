@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.time.TimeMark
@@ -64,7 +65,9 @@ class BleOperationQueue(
     private class QueuedOperation(
         val operation: BleOperation,
         val result: CompletableDeferred<BleOperationResult> = CompletableDeferred(),
-    )
+    ) {
+        var initiated = false
+    }
 
     private inner class DeviceLane(val identifier: String) {
         val channel = Channel<QueuedOperation>(Channel.UNLIMITED)
@@ -73,22 +76,31 @@ class BleOperationQueue(
             for (queued in channel) {
                 if (queued.result.isCompleted) continue // cancelled while parked
 
-                if (!isEligible(identifier, queued.operation)) {
-                    queued.result.complete(BleOperationResult.Cancelled)
-                    continue
-                }
-
-                log.d { "${queued.operation.describe()} on $identifier: initiating" }
-                if (!initiate(identifier, queued.operation)) {
-                    log.w { "Could not initiate ${queued.operation.describe()} on $identifier" }
-                    queued.result.complete(BleOperationResult.NotInitiated)
-                    continue
-                }
-
+                // Publish before initiation: an adapter may deliver its callback inline.
                 pending = queued
                 try {
-                    val result = withTimeout(timeoutFor(queued.operation)) { queued.result.await() }
-                    log.d { "${queued.operation.describe()} on $identifier: ${result.describe()}" }
+                    withTimeout(timeoutFor(queued.operation)) {
+                        var retries = 0
+                        while (!queued.result.isCompleted) {
+                            if (!isEligible(identifier, queued.operation)) {
+                                queued.result.complete(BleOperationResult.Cancelled)
+                                break
+                            }
+                            queued.initiated = true
+                            val result = initiate(identifier, queued.operation)
+                            if (result == BleInitiationResult.Started) {
+                                val completed = queued.result.await()
+                                log.d { "${queued.operation.describe()} on $identifier: ${completed.describe()}" }
+                                break
+                            }
+                            queued.initiated = false
+                            if (result != BleInitiationResult.Busy || retries == BUSY_RETRY_DELAYS_MS.size) {
+                                queued.result.complete(BleOperationResult.NotInitiated)
+                                break
+                            }
+                            delay(BUSY_RETRY_DELAYS_MS[retries++])
+                        }
+                    }
                 } catch (_: TimeoutCancellationException) {
                     log.w { "${queued.operation.describe()} on $identifier timed out" }
                     queued.result.complete(BleOperationResult.Timeout)
@@ -117,7 +129,7 @@ class BleOperationQueue(
         return try { queued.result.await() }
         catch (cancelled: CancellationException) {
             // Drop parked work, but drain an in-flight GATT response before advancing the lane.
-            if (lane.pending !== queued) queued.result.cancel()
+            if (lane.pending !== queued || !queued.initiated) queued.result.cancel()
             throw cancelled
         }
     }
@@ -142,6 +154,7 @@ class BleOperationQueue(
         }
 
         val pending = lanes[event.identifier.uppercase()]?.pending ?: return null
+        if (!pending.initiated) return null
         val result = matchCompletion(pending.operation, event) ?: return null
         pending.result.complete(result)
         return pending.operation
@@ -177,20 +190,23 @@ class BleOperationQueue(
         !(operation is BleOperation.Write && operation.validUntil?.hasPassedNow() == true) &&
             shouldExecute(identifier, operation)
 
-    private fun initiate(identifier: String, op: BleOperation): Boolean = when (op) {
+    private fun initiate(identifier: String, op: BleOperation): BleInitiationResult = when (op) {
         is BleOperation.Write ->
-            transport.initiateWrite(identifier, op.characteristicUuid, op.value)
+            transport.initiateWriteResult(identifier, op.characteristicUuid, op.value)
 
         is BleOperation.Read ->
-            transport.initiateRead(identifier, op.characteristicUuid)
+            transport.initiateRead(identifier, op.characteristicUuid).asInitiationResult()
 
         is BleOperation.Subscribe ->
-            transport.initiateSubscribe(identifier, op.characteristicUuid, op.enable)
+            transport.initiateSubscribeResult(identifier, op.characteristicUuid, op.enable)
 
         is BleOperation.DiscoverServices ->
-            transport.initiateDiscoverServices(identifier)
-        is BleOperation.RequestMtu -> transport.initiateMtuRequest(identifier, op.mtu)
+            transport.initiateDiscoverServices(identifier).asInitiationResult()
+        is BleOperation.RequestMtu -> transport.initiateMtuRequest(identifier, op.mtu).asInitiationResult()
     }
+
+    private fun Boolean.asInitiationResult() =
+        if (this) BleInitiationResult.Started else BleInitiationResult.Rejected
 
     private fun timeoutFor(op: BleOperation): Long = when (op) {
         is BleOperation.DiscoverServices -> discoveryTimeoutMs
@@ -252,6 +268,7 @@ class BleOperationQueue(
     }
 
     companion object {
+        private val BUSY_RETRY_DELAYS_MS = longArrayOf(50, 100, 250)
         const val DEFAULT_OPERATION_TIMEOUT_MS = 15_000L
 
         /** Discovery includes the iOS pairing gate, which may retry 3× with 3s delays. */

@@ -2,6 +2,9 @@ package com.sasch.cameragps.sharednew.bluetooth.transport
 
 import kotlinx.coroutines.flow.Flow
 
+/** BUSY means no request was accepted and no completion callback is expected. */
+enum class BleInitiationResult { Started, Busy, Rejected }
+
 /**
  * Outcome of a single BLE I/O operation as reported by the platform stack.
  */
@@ -128,9 +131,15 @@ interface BlePeripheralTransport {
 
     fun initiateWrite(identifier: String, characteristicUuid: String, value: ByteArray): Boolean
 
+    fun initiateWriteResult(identifier: String, characteristicUuid: String, value: ByteArray): BleInitiationResult =
+        if (initiateWrite(identifier, characteristicUuid, value)) BleInitiationResult.Started else BleInitiationResult.Rejected
+
     fun initiateRead(identifier: String, characteristicUuid: String): Boolean
 
     fun initiateSubscribe(identifier: String, characteristicUuid: String, enable: Boolean): Boolean
+
+    fun initiateSubscribeResult(identifier: String, characteristicUuid: String, enable: Boolean): BleInitiationResult =
+        if (initiateSubscribe(identifier, characteristicUuid, enable)) BleInitiationResult.Started else BleInitiationResult.Rejected
 
     /**
      * Android: `gatt.discoverServices()`.

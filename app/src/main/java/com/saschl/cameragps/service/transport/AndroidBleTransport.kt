@@ -9,11 +9,13 @@ import android.bluetooth.BluetoothGattConnectionSettings
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
 import androidx.annotation.RequiresPermission
 import com.sasch.cameragps.sharednew.bluetooth.SonyBluetoothConstants
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperationStatus
+import com.sasch.cameragps.sharednew.bluetooth.transport.BleInitiationResult
 import com.sasch.cameragps.sharednew.bluetooth.transport.BlePeripheralTransport
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleTransportEvent
 import kotlinx.coroutines.channels.Channel
@@ -191,11 +193,17 @@ class AndroidBleTransport(
         identifier: String,
         characteristicUuid: String,
         value: ByteArray,
-    ): Boolean {
-        val connection = connections[identifier.uppercase()] ?: return false
+    ): Boolean = initiateWriteResult(identifier, characteristicUuid, value) == BleInitiationResult.Started
+
+    override fun initiateWriteResult(
+        identifier: String,
+        characteristicUuid: String,
+        value: ByteArray,
+    ): BleInitiationResult {
+        val connection = connections[identifier.uppercase()] ?: return BleInitiationResult.Rejected
         // The GATT handle survives disconnects for autoConnect; it is not proof of a live link.
-        if (!connection.isActive) return false
-        val characteristic = findCharacteristic(connection.gatt, characteristicUuid) ?: return false
+        if (!connection.isActive) return BleInitiationResult.Rejected
+        val characteristic = findCharacteristic(connection.gatt, characteristicUuid) ?: return BleInitiationResult.Rejected
         return writeCharacteristicCompat(connection.gatt, characteristic, value)
     }
 
@@ -215,16 +223,23 @@ class AndroidBleTransport(
         identifier: String,
         characteristicUuid: String,
         enable: Boolean,
-    ): Boolean {
+    ): Boolean = initiateSubscribeResult(identifier, characteristicUuid, enable) == BleInitiationResult.Started
+
+    @SuppressLint("MissingPermission")
+    override fun initiateSubscribeResult(
+        identifier: String,
+        characteristicUuid: String,
+        enable: Boolean,
+    ): BleInitiationResult {
         val address = identifier.uppercase()
-        val connection = connections[address] ?: return false
-        if (!connection.isActive) return false
-        val characteristic = findCharacteristic(connection.gatt, characteristicUuid) ?: return false
+        val connection = connections[address] ?: return BleInitiationResult.Rejected
+        if (!connection.isActive) return BleInitiationResult.Rejected
+        val characteristic = findCharacteristic(connection.gatt, characteristicUuid) ?: return BleInitiationResult.Rejected
         val descriptor =
             characteristic.getDescriptor(UUID.fromString(SonyBluetoothConstants.CCCD_UUID))
-                ?: return false
+                ?: return BleInitiationResult.Rejected
 
-        if (!connection.gatt.setCharacteristicNotification(characteristic, enable)) return false
+        if (!connection.gatt.setCharacteristicNotification(characteristic, enable)) return BleInitiationResult.Rejected
 
         pendingSubscribeEnable["$address:${characteristicUuid.lowercase()}"] = enable
         val descriptorValue = if (enable) {
@@ -232,7 +247,11 @@ class AndroidBleTransport(
         } else {
             BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
         }
-        return writeDescriptorCompat(connection.gatt, descriptor, descriptorValue)
+        val result = writeDescriptorCompat(connection.gatt, descriptor, descriptorValue)
+        if (result != BleInitiationResult.Started) {
+            pendingSubscribeEnable.remove("$address:${characteristicUuid.lowercase()}")
+        }
+        return result
     }
 
     @SuppressLint("MissingPermission")
@@ -446,21 +465,21 @@ class AndroidBleTransport(
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray,
         writeType: Int = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-    ): Boolean {
+    ): BleInitiationResult {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val result = gatt.writeCharacteristic(characteristic, value, writeType)
             // The link can drop after the active check but before Android accepts the write.
             if (result == ERROR_DEVICE_NOT_CONNECTED) {
                 Timber.d("Characteristic write not initiated because device disconnected")
-                return false
+                return BleInitiationResult.Rejected
             }
-            // 201 == device busy, spams sentry, but I do not know the cause yet
-            if (result != 0 && result != 201) {
-                Timber.e("Writing characteristic failed. Result: $result")
-                false
-            } else {
-                Timber.d("Characteristic written successfully (API 33+)")
-                true
+            when (result) {
+                BluetoothStatusCodes.SUCCESS -> BleInitiationResult.Started
+                BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY -> BleInitiationResult.Busy
+                else -> {
+                    Timber.w("Writing characteristic not initiated. Result: $result")
+                    BleInitiationResult.Rejected
+                }
             }
         } else {
             @Suppress("DEPRECATION")
@@ -470,7 +489,7 @@ class AndroidBleTransport(
             if (!result) {
                 Timber.e("Writing characteristic failed (legacy API)")
             }
-            result
+            if (result) BleInitiationResult.Started else BleInitiationResult.Rejected
         }
     }
 
@@ -479,19 +498,20 @@ class AndroidBleTransport(
         gatt: BluetoothGatt,
         descriptor: BluetoothGattDescriptor,
         value: ByteArray,
-    ): Boolean {
+    ): BleInitiationResult {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val result = gatt.writeDescriptor(descriptor, value)
             if (result == ERROR_DEVICE_NOT_CONNECTED) {
                 Timber.d("Descriptor write not initiated because device disconnected")
-                return false
+                return BleInitiationResult.Rejected
             }
-            if (result != 0 && result != 201) {
-                Timber.e("Writing descriptor failed. Result: $result")
-                false
-            } else {
-                Timber.d("Descriptor written successfully (API 33+)")
-                true
+            when (result) {
+                BluetoothStatusCodes.SUCCESS -> BleInitiationResult.Started
+                BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY -> BleInitiationResult.Busy
+                else -> {
+                    Timber.w("Writing descriptor not initiated. Result: $result")
+                    BleInitiationResult.Rejected
+                }
             }
         } else {
             @Suppress("DEPRECATION")
@@ -501,7 +521,7 @@ class AndroidBleTransport(
             if (!result) {
                 Timber.e("Writing descriptor failed (legacy API)")
             }
-            result
+            if (result) BleInitiationResult.Started else BleInitiationResult.Rejected
         }
     }
 }
