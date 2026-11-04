@@ -42,6 +42,10 @@ android {
 
 
     defaultConfig {
+        providers.gradleProperty("targetAbi").orNull?.let { abi ->
+            require(abi in setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")) { "Unsupported targetAbi: $abi" }
+            ndk { abiFilters += abi }
+        }
         applicationId = "com.saschl.cameragps"
         minSdk = 26
         targetSdk = 37

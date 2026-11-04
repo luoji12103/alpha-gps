@@ -8,6 +8,10 @@ android {
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
+        providers.gradleProperty("targetAbi").orNull?.let { abi ->
+            require(abi in setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")) { "Unsupported targetAbi: $abi" }
+            ndk { abiFilters += abi }
+        }
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
