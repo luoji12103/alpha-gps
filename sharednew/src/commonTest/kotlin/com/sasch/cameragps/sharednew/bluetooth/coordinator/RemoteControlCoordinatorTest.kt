@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -77,6 +78,29 @@ class RemoteControlCoordinatorTest {
     }
 
     // ---- Coordinator integration tests with fake port ----
+
+    @Test
+    fun inactiveRemoteBacksOffAfterThreeProbesAndStopsOnActivation() = runTest {
+        val id = "AA:BB:CC:DD:EE:FF"
+        val port = FakeBleGattPort()
+        port.connectedDevices.add(id)
+        port.devicesWithRemoteControl.add(id)
+        val coordinator = RemoteControlCoordinator(port, backgroundScope, inactiveProbeIntervalMs = 30_000)
+        coordinator.startRemoteStatusMonitoring(id)
+        advanceTimeBy(7_000)
+        runCurrent()
+        assertEquals(3, port.writtenCharacteristics.size)
+        advanceTimeBy(29_000)
+        runCurrent()
+        assertEquals(3, port.writtenCharacteristics.size)
+        advanceTimeBy(501)
+        runCurrent()
+        assertEquals(4, port.writtenCharacteristics.size)
+        coordinator.onRemoteStatusChanged(id, byteArrayOf(2, 0xa0.toByte(), 0))
+        advanceTimeBy(90_000)
+        runCurrent()
+        assertEquals(4, port.writtenCharacteristics.size)
+    }
 
     @Test
     fun wifiOwnershipStopsBleProbesAndPressesUntilReleased() = runTest {

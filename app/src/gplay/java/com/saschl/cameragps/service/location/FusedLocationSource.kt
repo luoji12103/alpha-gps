@@ -2,151 +2,107 @@ package com.saschl.cameragps.service.location
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.location.Location
 import android.os.Looper
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
-import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationSettingsRequest
 import com.google.android.gms.location.Priority
-import com.sasch.cameragps.sharednew.bluetooth.SonyBluetoothConstants.LOCATION_UPDATE_INTERVAL_MS
 import com.sasch.cameragps.sharednew.bluetooth.location.GeoLocation
 import com.sasch.cameragps.sharednew.bluetooth.location.LocationSource
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import timber.log.Timber
 
-/**
- * gplay-only [LocationSource] backed by the Play Services
- * FusedLocationProviderClient. [PlatformLocationSource] remains the fallback,
- * selected via the location-provider preference in [createLocationSource].
- */
-class FusedLocationSource(
-    private val context: Context,
-) : LocationSource {
-
-    private val locationChannel = Channel<GeoLocation>(Channel.UNLIMITED)
-    override val locations: Flow<GeoLocation> = locationChannel.receiveAsFlow()
-
+/** Every asynchronous completion belongs to one start/stop generation. Main-thread confined. */
+class FusedLocationSource(private val context: Context) : LocationSource {
+    private val locationChannel = Channel<GeoLocation>(Channel.CONFLATED)
+    override val locations = locationChannel.receiveAsFlow()
+    private val failureChannel = Channel<Unit>(Channel.CONFLATED)
+    override val failures = failureChannel.receiveAsFlow()
+    private val client by lazy { LocationServices.getFusedLocationProviderClient(context) }
+    private var generation = 0L
     private var started = false
-    private var fusedLocationClient: FusedLocationProviderClient? = null
-    private var locationCallback: LocationCallback? = null
+    private var callback: LocationCallback? = null
 
     @SuppressLint("MissingPermission")
     override fun start(): Boolean {
         if (started) return true
-        if (!hasAnyLocationProviderEnabled(context)) {
-            Timber.e("No location providers enabled, cannot start location updates")
-            return false
+        if (!hasAnyLocationProviderEnabled(context) ||
+            GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) != ConnectionResult.SUCCESS
+        ) return false
+        drainChannels()
+        val requestGeneration = ++generation
+        started = true
+        val listener = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                if (!isCurrent(requestGeneration)) return
+                result.lastLocation?.let { locationChannel.trySend(it.toGeoLocation()) }
+            }
         }
-        initializeIfNeeded()
-
+        callback = listener
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+            AndroidLocationPowerPolicy.UPDATE_INTERVAL_MS,
+        )
+            .setMinUpdateIntervalMillis(AndroidLocationPowerPolicy.UPDATE_INTERVAL_MS)
+            .setMaxUpdateAgeMillis(AndroidLocationPowerPolicy.MAX_INITIAL_FIX_AGE_MS)
+            .setWaitForAccurateLocation(false)
+            .build()
         return try {
-            startPlayServicesLocationUpdates()
-            started = true
+            val settings = LocationSettingsRequest.Builder().addLocationRequest(request).build()
+            LocationServices.getSettingsClient(context).checkLocationSettings(settings)
+                .addOnSuccessListener {
+                    if (isCurrent(requestGeneration)) {
+                        try {
+                            client.requestLocationUpdates(request, listener, Looper.getMainLooper())
+                                .addOnSuccessListener {
+                                    // stop() may have run before this registration finished.
+                                    if (!isCurrent(requestGeneration)) client.removeLocationUpdates(listener)
+                                }
+                                .addOnFailureListener { fail(requestGeneration, it) }
+                        } catch (e: Exception) {
+                            fail(requestGeneration, e)
+                        }
+                    }
+                }
+                .addOnFailureListener { fail(requestGeneration, it) }
+            // The first update can use a recent cached fix. No duplicate high-accuracy seed request.
             true
         } catch (e: Exception) {
-            Timber.e(e, "Failed to start location updates")
+            Timber.w(e, "Location registration could not start")
+            stop()
             false
         }
     }
 
     override fun stop() {
-        locationCallback?.let { callback ->
-            fusedLocationClient?.removeLocationUpdates(callback)
-        }
         started = false
+        generation++
+        callback?.let { listener ->
+            runCatching { client.removeLocationUpdates(listener) }
+                .onFailure { Timber.w(it, "Could not remove fused location listener") }
+        }
+        callback = null
+        drainChannels()
     }
 
-    override fun hasPreciseAuthorization(): Boolean = true
+    override fun hasPreciseAuthorization(): Boolean = hasPreciseLocationPermission(context)
 
-    // --- private helpers ---
+    private fun isCurrent(requestGeneration: Long) = started && generation == requestGeneration
 
-    private fun initializeIfNeeded() {
-        if (fusedLocationClient == null) {
-            fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-        }
-
-        if (locationCallback == null) {
-            locationCallback = object : LocationCallback() {
-                override fun onLocationResult(fetchedLocation: LocationResult) {
-                    super.onLocationResult(fetchedLocation)
-                    Timber.d("Got a new location")
-                    fetchedLocation.lastLocation?.let { emitLocation(it) }
-                }
-            }
-        }
+    private fun fail(requestGeneration: Long, error: Exception) {
+        if (!isCurrent(requestGeneration)) return
+        Timber.w(error, "Location registration failed")
+        stop()
+        failureChannel.trySend(Unit)
     }
 
-    private fun emitLocation(location: Location) {
-        locationChannel.trySend(
-            GeoLocation(
-                latitude = location.latitude,
-                longitude = location.longitude,
-                horizontalAccuracyMeters = location.accuracy.toDouble(),
-                timestampMillis = location.time,
-            )
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startPlayServicesLocationUpdates() {
-        val availability = GoogleApiAvailability.getInstance()
-        val resultCode = availability.isGooglePlayServicesAvailable(context)
-        if (resultCode != ConnectionResult.SUCCESS) {
-            Timber.w("Google Play Services unavailable (code: $resultCode). Check location provider setting.")
-            return
-        }
-
-        val fusedClient = fusedLocationClient
-        if (fusedClient == null) {
-            Timber.e("FusedLocationProviderClient not initialized")
-            return
-        }
-
-        // One-shot seed so the camera gets a fix without waiting for the first update
-        fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-            .addOnSuccessListener { location ->
-                if (location != null) {
-                    if (isLocationTooOld(location)) {
-                        Timber.w("Ignoring stale initial location from Play Services")
-                    } else {
-                        emitLocation(location)
-                    }
-                }
-            }.addOnFailureListener { e ->
-                Timber.e(e, "Failed to get initial location from Play Services")
-            }
-
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            LOCATION_UPDATE_INTERVAL_MS,
-        )
-            .setWaitForAccurateLocation(true)
-            .setMinUpdateDistanceMeters(2f)
-            .build()
-
-        val callback = locationCallback ?: return
-        val locationSettings = LocationSettingsRequest.Builder().addLocationRequest(locationRequest)
-
-        LocationServices.getSettingsClient(context).checkLocationSettings(locationSettings.build())
-            .addOnSuccessListener {
-                Timber.d("Location Settings are satisfied, starting location request")
-                fusedClient.requestLocationUpdates(
-                    locationRequest,
-                    callback,
-                    Looper.getMainLooper()
-                )
-            }.addOnFailureListener { exception ->
-                Timber.e(
-                    exception,
-                    "Location settings are not satisfied, cannot start location updates"
-                )
-            }
+    private fun drainChannels() {
+        while (locationChannel.tryReceive().isSuccess) {}
+        while (failureChannel.tryReceive().isSuccess) {}
     }
 }

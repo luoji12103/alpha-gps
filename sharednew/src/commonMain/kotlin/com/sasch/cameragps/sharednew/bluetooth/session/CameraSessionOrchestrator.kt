@@ -10,6 +10,7 @@ import com.sasch.cameragps.sharednew.bluetooth.coordinator.RemoteControlCoordina
 import com.sasch.cameragps.sharednew.bluetooth.location.LocationEvent
 import com.sasch.cameragps.sharednew.bluetooth.location.LocationSource
 import com.sasch.cameragps.sharednew.bluetooth.location.LocationTransmissionManager
+import com.sasch.cameragps.sharednew.bluetooth.location.LocationTransmissionPolicy
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperation
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperationQueue
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleOperationResult
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 
 /**
  * The common session orchestrator. Owns the per-device session registry, the
@@ -58,6 +60,9 @@ class CameraSessionOrchestrator(
     private val shouldRemainConnected: suspend (String) -> Boolean = { true },
     /** iOS: app-level transmission toggle for the location manager. */
     isTransmissionAllowed: () -> Boolean = { true },
+    locationPolicy: LocationTransmissionPolicy = LocationTransmissionPolicy(),
+    inactiveRemoteProbeIntervalMs: Long = RemoteControlCoordinator.REMOTE_STATUS_PROBE_INTERVAL_MS,
+    locationTimeSource: TimeSource = TimeSource.Monotonic,
 ) : CameraAutoCorrectionControls {
     private val log = logging()
 
@@ -88,7 +93,7 @@ class CameraSessionOrchestrator(
     private val port = QueuedBleGattPort(queue, transport, registry)
     private val autoCorrection = CameraAutoCorrectionController(port, registry, scope)
     private val timeSync = CameraTimeSyncController(port, registry, scope)
-    private val remoteControl: RemoteControlCoordinator = RemoteControlCoordinator(port, scope)
+    private val remoteControl = RemoteControlCoordinator(port, scope, inactiveRemoteProbeIntervalMs)
     private val sessionCoordinator =
         BleSessionCoordinator(port, remoteControl, timeSync::synchronize)
 
@@ -99,6 +104,8 @@ class CameraSessionOrchestrator(
         port = port,
         scope = scope,
         isTransmissionAllowed = isTransmissionAllowed,
+        policy = locationPolicy,
+        timeSource = locationTimeSource,
     )
 
     /**

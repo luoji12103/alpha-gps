@@ -11,6 +11,7 @@ import com.sasch.cameragps.sharednew.database.devices.CameraDeviceDAO
 import com.sasch.cameragps.sharednew.database.getDatabaseBuilder
 import com.sasch.cameragps.sharednew.remote.wifi.createAndroidWifiRemoteController
 import com.saschl.cameragps.service.location.createLocationSource
+import com.saschl.cameragps.service.location.AndroidLocationPowerPolicy
 import com.saschl.cameragps.service.transport.AndroidBleTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +55,9 @@ class AppServices(context: Context) {
         // encryption is still re-establishing, and the retry queues behind it.
         // A 3s first delay would stall every reconnect handshake.
         pairingPolicy = PairingRetryPolicy(firstRetryDelayMs = 0),
+        locationPolicy = AndroidLocationPowerPolicy.transmission,
+        locationTimeSource = AndroidLocationPowerPolicy.timeSource,
+        inactiveRemoteProbeIntervalMs = 30_000L,
     )
 
     /**

@@ -1,33 +1,27 @@
 package com.saschl.cameragps.service.location
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.location.LocationRequest
 import android.os.Build
 import android.os.Looper
-import com.sasch.cameragps.sharednew.bluetooth.SonyBluetoothConstants.LOCATION_UPDATE_INTERVAL_MS
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import com.sasch.cameragps.sharednew.bluetooth.location.GeoLocation
 import com.sasch.cameragps.sharednew.bluetooth.location.LocationSource
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import timber.log.Timber
 
-/**
- * Android [LocationSource] backed only by the platform [LocationManager] —
- * no Play Services. The only source in the foss flavor; the fallback provider
- * in the gplay flavor. Owns only provider plumbing — gating and periodic
- * sends live in the shared LocationTransmissionManager.
- */
-class PlatformLocationSource(
-    private val context: Context,
-) : LocationSource {
-
-    private val locationChannel = Channel<GeoLocation>(Channel.UNLIMITED)
-    override val locations: Flow<GeoLocation> = locationChannel.receiveAsFlow()
-
+/** Platform-only minute updates. Prefer the low-power provider when fused is unavailable. */
+class PlatformLocationSource(private val context: Context) : LocationSource {
+    private val locationChannel = Channel<GeoLocation>(Channel.CONFLATED)
+    override val locations = locationChannel.receiveAsFlow()
     private var started = false
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
@@ -35,137 +29,83 @@ class PlatformLocationSource(
     @SuppressLint("MissingPermission")
     override fun start(): Boolean {
         if (started) return true
-        if (!hasAnyLocationProviderEnabled(context)) {
-            Timber.e("No location providers enabled, cannot start location updates")
-            return false
-        }
-        locationManager = context.getSystemService(LocationManager::class.java)
-
+        val manager = context.getSystemService(LocationManager::class.java) ?: return false
+        locationManager = manager
+        while (locationChannel.tryReceive().isSuccess) {}
         return try {
-            startPlatformLocationUpdates()
+            val provider = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
+                manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                hasPreciseAuthorization() && manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+                else -> return false
+            }
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    if (started && locationListener === this) locationChannel.trySend(location.toGeoLocation())
+                }
+            }
+            locationListener = listener
             started = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val request = LocationRequest.Builder(AndroidLocationPowerPolicy.UPDATE_INTERVAL_MS)
+                    .setQuality(LocationRequest.QUALITY_BALANCED_POWER_ACCURACY)
+                    .setMinUpdateIntervalMillis(AndroidLocationPowerPolicy.UPDATE_INTERVAL_MS)
+                    .build()
+                manager.requestLocationUpdates(provider, request, context.mainExecutor, listener)
+            } else {
+                @Suppress("DEPRECATION")
+                manager.requestLocationUpdates(provider, AndroidLocationPowerPolicy.UPDATE_INTERVAL_MS,
+                    0f, listener, Looper.getMainLooper())
+            }
+            // A cached fix is useful only if it is recent; choose by elapsed time, not GPS-first.
+            val cached = listOf(provider, LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
+                .distinct()
+                .filter { it != LocationManager.GPS_PROVIDER || hasPreciseAuthorization() }
+                .mapNotNull { name -> runCatching { manager.getLastKnownLocation(name) }.getOrNull() }
+                .filterNot { isLocationTooOld(it) }
+                .maxByOrNull { it.elapsedRealtimeNanos }
+            cached?.let { locationChannel.trySend(it.toGeoLocation()) }
+            Timber.i("Started minute location updates with provider %s", provider)
             true
         } catch (e: Exception) {
-            Timber.e(e, "Failed to start location updates")
+            Timber.w(e, "Failed to register platform location updates")
+            stop()
             false
         }
     }
 
     override fun stop() {
-        locationListener?.let { listener ->
-            locationManager?.removeUpdates(listener)
-            locationListener = null
-        }
         started = false
+        val listener = locationListener
+        locationListener = null
+        if (listener != null) runCatching { locationManager?.removeUpdates(listener) }
+            .onFailure { Timber.w(it, "Could not remove platform location listener") }
+        while (locationChannel.tryReceive().isSuccess) {}
     }
 
-    override fun hasPreciseAuthorization(): Boolean = true
-
-    // --- private helpers ---
-
-    private fun emitLocation(location: Location) {
-        locationChannel.trySend(
-            GeoLocation(
-                latitude = location.latitude,
-                longitude = location.longitude,
-                horizontalAccuracyMeters = location.accuracy.toDouble(),
-                timestampMillis = location.time,
-            )
-        )
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startPlatformLocationUpdates() {
-        val locManager = locationManager ?: run {
-            Timber.e("LocationManager not initialized")
-            return
-        }
-
-        val lastKnownLocation = locManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            ?: locManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-
-        if (lastKnownLocation != null) {
-            if (isLocationTooOld(lastKnownLocation)) {
-                Timber.w("Ignoring stale initial location from platform provider")
-            } else {
-                Timber.d("Emitting initial location from platform provider")
-                emitLocation(lastKnownLocation)
-            }
-        }
-
-        val listener = object : LocationListener {
-            override fun onLocationChanged(location: Location) {
-                Timber.d("Got a new location from platform provider")
-                emitLocation(location)
-            }
-
-            override fun onProviderEnabled(provider: String) {
-                Timber.i("Location provider enabled: $provider")
-            }
-
-            override fun onProviderDisabled(provider: String) {
-                Timber.w("Location provider disabled: $provider")
-            }
-        }
-
-        locationListener = listener
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (locManager.isProviderEnabled(LocationManager.FUSED_PROVIDER)) {
-                locManager.requestLocationUpdates(
-                    LocationManager.FUSED_PROVIDER,
-                    LOCATION_UPDATE_INTERVAL_MS,
-                    10f,
-                    listener,
-                    Looper.getMainLooper(),
-                )
-                Timber.i("Started location updates from FUSED provider (Android 12+)")
-            } else {
-                Timber.w("FUSED provider not available, falling back to GPS")
-                requestGpsLocationUpdates(locManager, listener)
-            }
-        } else {
-            requestGpsLocationUpdates(locManager, listener)
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun requestGpsLocationUpdates(locManager: LocationManager, listener: LocationListener) {
-        if (locManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-            locManager.requestLocationUpdates(
-                LocationManager.GPS_PROVIDER,
-                LOCATION_UPDATE_INTERVAL_MS,
-                0f,
-                listener,
-                Looper.getMainLooper(),
-            )
-            Timber.i("Started location updates from GPS provider")
-        } else if (locManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-            locManager.requestLocationUpdates(
-                LocationManager.NETWORK_PROVIDER,
-                LOCATION_UPDATE_INTERVAL_MS,
-                0f,
-                listener,
-                Looper.getMainLooper(),
-            )
-            Timber.i("GPS disabled, using Network provider as fallback")
-        } else {
-            Timber.e("No location providers available")
-        }
-    }
+    override fun hasPreciseAuthorization(): Boolean = hasPreciseLocationPermission(context)
 }
 
-internal fun hasAnyLocationProviderEnabled(context: Context): Boolean {
-    val manager = context.getSystemService(LocationManager::class.java)
-    val gpsEnabled = manager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
-    val networkEnabled = manager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true
-    return gpsEnabled || networkEnabled
-}
+internal fun hasPreciseLocationPermission(context: Context): Boolean =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+internal fun hasAnyLocationProviderEnabled(context: Context): Boolean = runCatching {
+    val manager = context.getSystemService(LocationManager::class.java) ?: return false
+    manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+        manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ||
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER))
+}.getOrDefault(false)
 
 internal fun isLocationTooOld(location: Location): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        location.elapsedRealtimeAgeMillis > 30000
-    } else {
-        (System.currentTimeMillis() - location.time) > 30000
-    }
+    val ageNanos = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
+    return ageNanos < 0 || ageNanos >= AndroidLocationPowerPolicy.MAX_INITIAL_FIX_AGE_MS * 1_000_000
+}
+
+/** Normalize the fix age from Android's monotonic clock, including on API 26–32. */
+internal fun Location.toGeoLocation(): GeoLocation {
+    val ageNanos = SystemClock.elapsedRealtimeNanos() - elapsedRealtimeNanos
+    val timestamp = if (ageNanos < 0 || elapsedRealtimeNanos <= 0) Long.MAX_VALUE
+        else System.currentTimeMillis() - ageNanos / 1_000_000
+    return GeoLocation(latitude, longitude, if (hasAccuracy()) accuracy.toDouble() else -1.0,
+        timestamp)
 }

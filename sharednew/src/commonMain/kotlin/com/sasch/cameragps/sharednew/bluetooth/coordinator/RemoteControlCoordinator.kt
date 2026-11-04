@@ -31,6 +31,7 @@ import kotlin.time.Duration.Companion.milliseconds
 class RemoteControlCoordinator(
     private val port: BleGattPort,
     private val scope: CoroutineScope,
+    private val inactiveProbeIntervalMs: Long = REMOTE_STATUS_PROBE_INTERVAL_MS,
 ) {
     private val log = logging()
 
@@ -367,6 +368,7 @@ class RemoteControlCoordinator(
 
         val job = scope.launch {
             delay(REMOTE_STATUS_PROBE_INITIAL_DELAY_MS.milliseconds)
+            var attempts = 0
             while (isActive) {
                 if (!port.isConnected(identifier)) {
                     break
@@ -381,7 +383,9 @@ class RemoteControlCoordinator(
                     SonyBluetoothConstants.PROBE_COMMAND,
                 )
 
-                delay(REMOTE_STATUS_PROBE_INTERVAL_MS.milliseconds)
+                attempts++
+                delay((if (attempts < 3) REMOTE_STATUS_PROBE_INTERVAL_MS
+                    else inactiveProbeIntervalMs).milliseconds)
             }
             // Clean up our own entry when the loop exits naturally
             val currentJob = currentCoroutineContext()[Job]

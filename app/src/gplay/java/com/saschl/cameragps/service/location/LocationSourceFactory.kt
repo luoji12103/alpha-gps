@@ -7,6 +7,7 @@ import com.sasch.cameragps.sharednew.ui.settings.LocationProvider
 import com.saschl.cameragps.utils.PreferencesManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.flow
 
 /** The gplay flavor lets the user pick between Play Services and the platform provider. */
 const val LOCATION_PROVIDER_SELECTABLE = true
@@ -31,6 +32,16 @@ private class SwitchingLocationSource(
 
     private var active: LocationSource? = null
 
+    override val failures: Flow<Unit> = flow {
+        fused.failures.collect {
+            if (active === fused) {
+                fused.stop()
+                active = platform.takeIf { it.start() }
+                if (active == null) emit(Unit)
+            }
+        }
+    }
+
     override fun start(): Boolean {
         active?.let { return true }
         // Re-read the provider preference on every (re)start, so a
@@ -41,11 +52,10 @@ private class SwitchingLocationSource(
             } else {
                 platform
             }
-        val startedSuccessfully = source.start()
-        if (startedSuccessfully) {
-            active = source
-        }
-        return startedSuccessfully
+        active = if (source.start()) source
+            else if (source === fused && platform.start()) platform
+            else null
+        return active != null
     }
 
     override fun stop() {
@@ -53,5 +63,5 @@ private class SwitchingLocationSource(
         active = null
     }
 
-    override fun hasPreciseAuthorization(): Boolean = true
+    override fun hasPreciseAuthorization(): Boolean = hasPreciseLocationPermission(context)
 }
