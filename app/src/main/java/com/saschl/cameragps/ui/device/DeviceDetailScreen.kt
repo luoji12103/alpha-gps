@@ -4,6 +4,7 @@ import android.Manifest
 import android.companion.CompanionDeviceManager
 import android.companion.ObservingDevicePresenceRequest
 import android.content.Intent
+import android.content.Context
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresPermission
@@ -52,11 +53,12 @@ import com.saschl.cameragps.R
 import com.saschl.cameragps.service.AssociatedDeviceCompat
 import com.saschl.cameragps.service.LocationSenderService
 import com.saschl.cameragps.ui.pairing.startDevicePresenceObservation
+import com.saschl.cameragps.utils.PreferencesManager
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
 import timber.log.Timber
 
-private fun createAndroidDataSource(dao: CameraDeviceDAO): DeviceDetailDataSource {
+private fun createAndroidDataSource(dao: CameraDeviceDAO, context: Context): DeviceDetailDataSource {
     return object : DeviceDetailDataSource {
         override suspend fun ensureDeviceExists(deviceId: String, deviceName: String?) {
             // Companion/pairing flows own the row's settings, but a rename needs
@@ -73,6 +75,7 @@ private fun createAndroidDataSource(dao: CameraDeviceDAO): DeviceDetailDataSourc
 
         override suspend fun setDeviceEnabled(deviceId: String, enabled: Boolean) {
             dao.setDeviceEnabled(deviceId, enabled)
+            if (enabled) PreferencesManager.setNfcCameraPaused(context, deviceId, false)
         }
 
         override suspend fun setAlwaysOnEnabled(deviceId: String, enabled: Boolean) {
@@ -115,7 +118,7 @@ fun DeviceDetailScreen(
     val viewModel: DeviceDetailViewModel = viewModel(key = device.address) {
         val dao = LogDatabase.getRoomDatabase(getDatabaseBuilder(context)).cameraDeviceDao()
         DeviceDetailViewModel(
-            dataSource = createAndroidDataSource(dao),
+            dataSource = createAndroidDataSource(dao, context.applicationContext),
             serviceActions = AndroidDeviceDetailServiceActions(context.applicationContext),
             cameraSettings = AppServices.from(context).orchestrator,
         )

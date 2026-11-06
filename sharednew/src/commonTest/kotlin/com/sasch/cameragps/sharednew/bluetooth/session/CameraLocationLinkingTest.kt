@@ -45,6 +45,48 @@ class CameraLocationLinkingTest {
     }
 
     @Test
+    fun handoffReleaseCannotRestartTheClearedHandshakeOrLocationSource() = runTest {
+        val f = Fixture(backgroundScope)
+        f.connect("A")
+        runCurrent()
+        assertTrue(f.source.active)
+        f.orchestrator.clearDevice("A")
+        f.transport.operations.clear()
+        val release = async { f.orchestrator.releaseLocationForHandoff("A") }
+        runCurrent()
+        release.await()
+        val write = f.transport.operations.single().second as BleOperation.Write
+        assertEquals(Sony.CHARACTERISTIC_ENABLE_UNLOCK_GPS_COMMAND, write.characteristicUuid)
+        assertTrue(write.value.contentEquals(Sony.LOCATION_LOCK_RELEASE_COMMAND))
+        assertFalse(f.source.active)
+        assertFalse(f.orchestrator.registry.get("A")?.isLocationReady == true)
+        f.fix()
+        advanceTimeBy(5_001)
+        runCurrent()
+        assertTrue(f.transport.locationWrites().isEmpty())
+    }
+
+    @Test
+    fun handingOffOneCameraKeepsTheOtherCameraTracking() = runTest {
+        val f = Fixture(backgroundScope)
+        f.connect("A")
+        f.connect("B")
+        runCurrent()
+        f.orchestrator.clearDevice("A")
+        val release = async { f.orchestrator.releaseLocationForHandoff("A") }
+        runCurrent()
+        release.await()
+        f.transport.operations.clear()
+        f.fix()
+        runCurrent()
+        advanceTimeBy(5_001)
+        runCurrent()
+        assertTrue(f.source.active)
+        assertTrue(f.transport.locationWrites().isNotEmpty())
+        assertTrue(f.transport.locationWrites().all { it.first == "B" })
+    }
+
+    @Test
     fun timeResultWaitAndRejectionDoNotGateGpsOrRestartHandshake() = runTest {
         val f = Fixture(backgroundScope)
         f.transport.hasTimeResult = true

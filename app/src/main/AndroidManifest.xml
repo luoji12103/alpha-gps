@@ -5,6 +5,9 @@
     <uses-feature android:name="android.software.companion_device_setup" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="true"/>
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+    <uses-permission android:name="android.permission.NFC" />
 
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -70,6 +73,24 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".nfc.NfcActivity" android:exported="true"
+            android:launchMode="singleTop" android:theme="@style/Theme.CameraGps">
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.com.saschl.cameragps.camera" />
+            </intent-filter>
+        </activity>
+
+        <service android:name=".nfc.CameraHandoffNfcService"
+            android:exported="true" android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+            </intent-filter>
+            <meta-data android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/nfc_handoff_service" />
+        </service>
 
         <service
             android:name="com.saschl.cameragps.service.CameraDeviceCompanionService"

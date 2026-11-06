@@ -227,6 +227,17 @@ class CameraSessionOrchestrator(
         locationManager.updateTracking()
     }
 
+    /** Best-effort release after the caller has fenced location writes; always close GATT afterwards. */
+    suspend fun releaseLocationForHandoff(identifier: String) {
+        val id = identifier.uppercase()
+        if (transport.isConnected(id) && transport.hasCharacteristic(id, SonyBluetoothConstants.CHARACTERISTIC_ENABLE_UNLOCK_GPS_COMMAND)) {
+            queue.execute(id, BleOperation.Write(
+                SonyBluetoothConstants.CHARACTERISTIC_ENABLE_UNLOCK_GPS_COMMAND,
+                SonyBluetoothConstants.LOCATION_LOCK_RELEASE_COMMAND,
+            ))
+        }
+    }
+
     fun shutdownAll() {
         autoCorrection.clearAll()
         timeSync.clearAll()

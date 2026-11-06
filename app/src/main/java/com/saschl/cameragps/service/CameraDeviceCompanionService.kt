@@ -21,6 +21,7 @@ import java.util.Locale
 class CameraDeviceCompanionService : CompanionDeviceService() {
 
     private fun startLocationSenderService(address: String?) {
+        if (address != null && PreferencesManager.isNfcCameraPaused(this, address)) return
         if (PreferencesManager.isAppEnabled(this)) {
             if (!LocationSenderService.hasLocationPermission(this)) {
                 Timber.e("Location permission missing, not starting LocationSenderService for $address")

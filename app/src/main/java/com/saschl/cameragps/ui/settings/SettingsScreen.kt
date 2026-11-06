@@ -1,5 +1,6 @@
 package com.saschl.cameragps.ui.settings
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,6 +42,7 @@ import com.sasch.cameragps.sharednew.ui.settings.SharedSettingsScreen
 import com.sasch.cameragps.sharednew.whatsnew.WhatsNewSettingsCard
 import com.sasch.cameragps.sharednew.whatsnew.WhatsNewState
 import com.saschl.cameragps.R
+import com.saschl.cameragps.nfc.NfcActivity
 import com.saschl.cameragps.service.location.LOCATION_PROVIDER_SELECTABLE
 import com.saschl.cameragps.ui.ReviewHintDebugPanel
 import com.saschl.cameragps.utils.CrashReporting
@@ -145,6 +147,7 @@ private fun SettingsOverviewScreen(
                 .padding(paddingValues),
         ) {
             AppControlsInlineSection()
+            NfcSettingsEntry()
             LogLevelSettingsCard()
             if (LOCATION_PROVIDER_SELECTABLE) {
                 SettingsSectionNavigation(
@@ -178,6 +181,16 @@ private fun SettingsOverviewScreen(
             }
         }
     }
+}
+
+@Composable
+private fun NfcSettingsEntry() {
+    val context = LocalContext.current
+    SettingsSectionNavigation(
+        title = androidx.compose.ui.res.stringResource(R.string.nfc_title),
+        description = androidx.compose.ui.res.stringResource(R.string.nfc_settings_description),
+        onClick = { context.startActivity(Intent(context, NfcActivity::class.java)) },
+    )
 }
 
 @Composable

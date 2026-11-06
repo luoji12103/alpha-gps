@@ -13,6 +13,7 @@ import com.sasch.cameragps.sharednew.remote.wifi.createAndroidWifiRemoteControll
 import com.saschl.cameragps.service.location.createLocationSource
 import com.saschl.cameragps.service.location.AndroidLocationPowerPolicy
 import com.saschl.cameragps.service.transport.AndroidBleTransport
+import com.saschl.cameragps.utils.PreferencesManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +59,14 @@ class AppServices(context: Context) {
         locationPolicy = AndroidLocationPowerPolicy.transmission,
         locationTimeSource = AndroidLocationPowerPolicy.timeSource,
         inactiveRemoteProbeIntervalMs = 30_000L,
+        shouldRemainConnected = { address ->
+            val enabled = deviceDao.isDeviceEnabled(address)
+            // Recheck the synchronous fence after Room suspends: a handoff may have happened meanwhile.
+            val allowed = enabled && PreferencesManager.isAppEnabled(appContext) &&
+                !PreferencesManager.isNfcCameraPaused(appContext, address)
+            if (!allowed) transport.pauseDevice(address)
+            allowed
+        },
     )
 
     /**

@@ -19,6 +19,7 @@ import com.sasch.cameragps.sharednew.bluetooth.transport.BlePeripheralTransport
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleTransportEvent
 import com.sasch.cameragps.sharednew.bluetooth.transport.BleInitiationResult
 import com.saschl.cameragps.service.coordinator.ServiceConnectionControl
+import com.saschl.cameragps.utils.PreferencesManager
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -76,6 +77,7 @@ class AndroidBleTransport(
 
     override fun connect(mac: String): Boolean {
         val address = mac.uppercase()
+        if (!PreferencesManager.isAppEnabled(context) || PreferencesManager.isNfcCameraPaused(context, address)) return false
         if (connections.containsKey(address)) {
             return true
         }
@@ -222,6 +224,10 @@ class AndroidBleTransport(
         characteristicUuid: String,
         value: ByteArray,
     ): BleInitiationResult {
+        if (PreferencesManager.isNfcCameraPaused(context, identifier) &&
+            !(characteristicUuid.equals(SonyBluetoothConstants.CHARACTERISTIC_ENABLE_UNLOCK_GPS_COMMAND, true) &&
+                value.contentEquals(SonyBluetoothConstants.LOCATION_LOCK_RELEASE_COMMAND))
+        ) return BleInitiationResult.Rejected
         val connection = connections[identifier.uppercase()] ?: return BleInitiationResult.Rejected
         // The GATT handle survives disconnects for autoConnect; it is not proof of a live link.
         if (!connection.isActive) return BleInitiationResult.Rejected

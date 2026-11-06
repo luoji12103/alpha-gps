@@ -314,6 +314,8 @@ fun CameraDeviceManager(
                                             deviceEnabled = true,
                                         )
                                     )
+                                    // A newly confirmed pairing is an explicit local choice, unlike CDM appearance.
+                                    PreferencesManager.setNfcCameraPaused(context, it.address, false)
                                     delay(1000) // give the system a short time to breathe
                                     startDevicePresenceObservation(deviceManager, it)
                                     // Refresh the devices list to update pairing state

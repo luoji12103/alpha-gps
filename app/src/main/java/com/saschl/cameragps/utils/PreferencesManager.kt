@@ -1,6 +1,7 @@
 package com.saschl.cameragps.utils
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
@@ -91,6 +92,17 @@ object PreferencesManager {
             putBoolean(KEY_APP_ENABLED, enabled)
         }
     }
+
+    /** Durable handoff fence: persists even if the old phone is restarted or killed. */
+    fun isNfcCameraPaused(context: Context, address: String): Boolean =
+        getPreferences(context).getBoolean("nfc_paused_${address.uppercase(java.util.Locale.ROOT)}", false)
+
+    // The Boolean commit result is required before acknowledging a durable handoff; KTX edit returns Unit.
+    @SuppressLint("UseKtx")
+    fun setNfcCameraPaused(context: Context, address: String, paused: Boolean): Boolean =
+        getPreferences(context).edit()
+            .putBoolean("nfc_paused_${address.uppercase(java.util.Locale.ROOT)}", paused)
+            .commit()
 
 
     fun reviewHintLastShownDaysAgo(context: Context, initialize: Boolean = false): Long {
