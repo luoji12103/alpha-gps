@@ -1,13 +1,13 @@
 package com.saschl.cameragps
 
 import android.app.Application
-import com.diamondedge.logging.FixedLogLevel
 import com.diamondedge.logging.KmLogging
 import com.diamondedge.logging.PlatformLogger
 import com.sasch.cameragps.sharednew.crash.CrashReportPolicy
 import com.saschl.cameragps.service.FileTree
 import com.saschl.cameragps.service.GlobalExceptionHandler
 import com.saschl.cameragps.service.TimberLogger
+import com.saschl.cameragps.service.PriorityLogLevel
 import com.saschl.cameragps.utils.CrashReporting
 import com.saschl.cameragps.utils.PreferencesManager
 import timber.log.Timber
@@ -29,7 +29,8 @@ class CameraGpsApplication : Application() {
         Timber.plant(FileTree(this, PreferencesManager.logLevel(this)))
         // Keep Logcat/tag generation and also route shared logs into the in-app
         // database and consent-controlled Timber trees. Trees own their thresholds.
-        KmLogging.setLoggers(PlatformLogger(FixedLogLevel(true)), TimberLogger())
+        val logLevels = PriorityLogLevel { PreferencesManager.logLevel(this) }
+        KmLogging.setLoggers(PlatformLogger(logLevels), TimberLogger(logLevels))
 
         // Crash reporting only after consent — the consent dialog does the
         // first init. No-op in the foss flavor.

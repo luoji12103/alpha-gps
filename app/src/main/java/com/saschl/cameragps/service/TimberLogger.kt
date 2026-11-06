@@ -6,10 +6,20 @@ import com.diamondedge.logging.Logger
 import timber.log.Timber
 
 /** Shared logs use the same database filtering and crash-reporting trees as Android logs. */
-internal class TimberLogger : Logger, LogLevelController by FixedLogLevel(true) {
+internal class TimberLogger(levels: LogLevelController = FixedLogLevel(true)) :
+    Logger, LogLevelController by levels {
     override fun verbose(tag: String, msg: String) = Timber.tag(tag).v(msg)
     override fun debug(tag: String, msg: String) = Timber.tag(tag).d(msg)
     override fun info(tag: String, msg: String) = Timber.tag(tag).i(msg)
     override fun warn(tag: String, msg: String, t: Throwable?) = Timber.tag(tag).w(t, msg)
     override fun error(tag: String, msg: String, t: Throwable?) = Timber.tag(tag).e(t, msg)
+}
+
+/** Filters shared log lambdas. Refresh KmLogging flags when the preference changes. */
+internal class PriorityLogLevel(private val minimum: () -> Int) : LogLevelController {
+    override fun isLoggingVerbose() = minimum() <= 2
+    override fun isLoggingDebug() = minimum() <= 3
+    override fun isLoggingInfo() = minimum() <= 4
+    override fun isLoggingWarning() = minimum() <= 5
+    override fun isLoggingError() = minimum() <= 6
 }

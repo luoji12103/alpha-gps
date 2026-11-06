@@ -1,6 +1,7 @@
 package com.saschl.cameragps.service
 
 import com.diamondedge.logging.KmLogging
+import com.diamondedge.logging.logging
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -69,5 +70,33 @@ class TimberLoggerTest {
         Timber.plant(infoEnabled)
         KmLogging.info("BLE", "Following CC09")
         assertEquals(listOf("Following CC09"), infoEnabled.entries.map { it.message })
+    }
+
+    @Test
+    fun disabledSharedLogsAreNotFormattedAndThresholdChangesTakeEffectImmediately() {
+        var minimum = 5
+        KmLogging.setLoggers(TimberLogger(PriorityLogLevel { minimum }))
+        val tree = RecordingTree()
+        Timber.plant(tree)
+        val logger = logging("BLE")
+        var formatted = 0
+        logger.d { formatted++; "periodic debug" }
+        logger.i { formatted++; "routine info" }
+        assertEquals(0, formatted)
+        assertTrue(tree.entries.isEmpty())
+        logger.w { "registration failed" }
+        assertEquals(listOf(5), tree.entries.map { it.priority })
+
+        minimum = 3
+        KmLogging.setupLoggingFlags()
+        logger.d { formatted++; "requested diagnostics" }
+        assertEquals(1, formatted)
+        assertEquals(listOf(5, 3), tree.entries.map { it.priority })
+
+        minimum = 5
+        KmLogging.setupLoggingFlags()
+        logger.d { formatted++; "hidden again" }
+        assertEquals(1, formatted)
+        assertEquals(listOf(5, 3), tree.entries.map { it.priority })
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.core.content.edit
+import com.diamondedge.logging.KmLogging
 import com.sasch.cameragps.sharednew.ui.settings.LocationProvider
 import com.saschl.cameragps.service.TransmissionSoundEvent
 import com.saschl.cameragps.service.TransmissionSoundMode
@@ -210,6 +211,8 @@ object PreferencesManager {
         getPreferences(context).edit {
             putInt(KEY_LOG_LEVEL, logLevel)
         }
+        // KmLogging caches enabled levels; refresh after the in-memory preference changes.
+        KmLogging.setupLoggingFlags()
     }
 
     fun isHapticsEnabled(context: Context): Boolean {

@@ -72,6 +72,8 @@ class FileTree(context: Context, private val minPriority: Int) : Timber.Tree() {
      * @param message Formatted log message. May be `null`, but then `t` will not be.
      * @param t Accompanying exceptions. May be `null`, but then `message` will not be.
      */
+    override fun isLoggable(tag: String?, priority: Int): Boolean = priority >= minPriority
+
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
         if (priority >= minPriority) {
             logRepository?.insertLog(System.currentTimeMillis(), priority, tag, message, t?.stackTraceToString())

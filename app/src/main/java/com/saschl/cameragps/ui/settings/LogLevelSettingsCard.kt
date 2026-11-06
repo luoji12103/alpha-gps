@@ -80,7 +80,8 @@ internal fun LogLevelSettingsCard() {
                     currentLogLevel.intValue = level
                     PreferencesManager.setLogLevel(context, level)
                     showLogLevelDialog = false
-                    Timber.uprootAll()
+                    // Keep opt-in crash reporting and any other installed trees.
+                    Timber.forest().filterIsInstance<FileTree>().forEach { Timber.uproot(it) }
                     Timber.plant(FileTree(context, level))
                 },
                 onDismiss = { showLogLevelDialog = false }
