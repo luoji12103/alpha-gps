@@ -22,6 +22,8 @@ import timber.log.Timber
 class PlatformLocationSource(private val context: Context) : LocationSource {
     private val locationChannel = Channel<GeoLocation>(Channel.CONFLATED)
     override val locations = locationChannel.receiveAsFlow()
+    private val failureChannel = Channel<Unit>(Channel.CONFLATED)
+    override val failures = failureChannel.receiveAsFlow()
     private var started = false
     private var locationManager: LocationManager? = null
     private var locationListener: LocationListener? = null
@@ -31,7 +33,7 @@ class PlatformLocationSource(private val context: Context) : LocationSource {
         if (started) return true
         val manager = context.getSystemService(LocationManager::class.java) ?: return false
         locationManager = manager
-        while (locationChannel.tryReceive().isSuccess) {}
+        drainChannels()
         return try {
             val provider = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.isProviderEnabled(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
@@ -42,6 +44,12 @@ class PlatformLocationSource(private val context: Context) : LocationSource {
             val listener = object : LocationListener {
                 override fun onLocationChanged(location: Location) {
                     if (started && locationListener === this) locationChannel.trySend(location.toGeoLocation())
+                }
+
+                override fun onProviderDisabled(disabledProvider: String) {
+                    if (started && locationListener === this && disabledProvider == provider) {
+                        failureChannel.trySend(Unit)
+                    }
                 }
             }
             locationListener = listener
@@ -80,10 +88,15 @@ class PlatformLocationSource(private val context: Context) : LocationSource {
         locationListener = null
         if (listener != null) runCatching { locationManager?.removeUpdates(listener) }
             .onFailure { Timber.w(it, "Could not remove platform location listener") }
-        while (locationChannel.tryReceive().isSuccess) {}
+        drainChannels()
     }
 
     override fun hasPreciseAuthorization(): Boolean = hasPreciseLocationPermission(context)
+
+    private fun drainChannels() {
+        while (locationChannel.tryReceive().isSuccess) {}
+        while (failureChannel.tryReceive().isSuccess) {}
+    }
 }
 
 internal fun hasPreciseLocationPermission(context: Context): Boolean =

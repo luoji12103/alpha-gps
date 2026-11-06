@@ -7,6 +7,7 @@ import com.sasch.cameragps.sharednew.bluetooth.coordinator.LocationDataConfig
 import com.sasch.cameragps.sharednew.bluetooth.coordinator.LocationPacketBuilder
 import com.sasch.cameragps.sharednew.bluetooth.coordinator.PlatformTimeZoneInfo
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -74,6 +75,8 @@ class LocationTransmissionManager(
     private var periodicJob: Job? = null
     private var expiryJob: Job? = null
     private var failureJob: Job? = null
+    private var retryJob: Job? = null
+    private var nextRetryDelayMs = policy.sourceRetryInitialDelayMs
 
     /**
      * A device finished its handshake: make sure tracking runs and give the
@@ -107,9 +110,21 @@ class LocationTransmissionManager(
         if (!isTransmissionAllowed()) return
         if (readySessions().isEmpty()) return
         if (_isActive.value) return
+        if (retryJob?.isActive == true) return
 
-        if (!source.start()) {
+        val registered = try {
+            source.start()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            log.e(error, msg = { "Location source registration failed" })
+            source.stop()
+            false
+        }
+        if (!registered) {
             log.e { "Location source could not be started, cannot begin transmission" }
+            reportUnavailable()
+            scheduleSourceRetry()
             return
         }
         _isActive.value = true
@@ -120,11 +135,29 @@ class LocationTransmissionManager(
         }
         failureJob = scope.launch {
             source.failures.collect {
-                stopUpdates()
+                stopUpdates(resetRetry = false)
                 reportUnavailable()
+                scheduleSourceRetry()
             }
         }
         startResendIfNeeded()
+    }
+
+    private fun scheduleSourceRetry() {
+        if (policy.sourceRetryInitialDelayMs == 0L || retryJob?.isActive == true ||
+            readySessions().isEmpty() || !isTransmissionAllowed()
+        ) return
+        val delayMs = nextRetryDelayMs
+        nextRetryDelayMs = if (delayMs >= policy.sourceRetryMaxDelayMs - delayMs) {
+            policy.sourceRetryMaxDelayMs
+        } else {
+            delayMs * 2
+        }
+        retryJob = scope.launch {
+            delay(delayMs.milliseconds)
+            retryJob = null
+            startIfNeeded()
+        }
     }
 
     private fun startResendIfNeeded() {
@@ -147,7 +180,10 @@ class LocationTransmissionManager(
         }
     }
 
-    private fun stopUpdates() {
+    private fun stopUpdates(resetRetry: Boolean = true) {
+        retryJob?.cancel()
+        retryJob = null
+        if (resetRetry) nextRetryDelayMs = policy.sourceRetryInitialDelayMs
         _isTransmitting.value = false
         if (_isActive.value) {
             source.stop()
@@ -194,6 +230,7 @@ class LocationTransmissionManager(
         hasSessionLocation = true
         reportedUnavailable = false
         latest = fix
+        nextRetryDelayMs = policy.sourceRetryInitialDelayMs
         startResendIfNeeded()
         expiryJob?.cancel()
         expiryJob = scope.launch {

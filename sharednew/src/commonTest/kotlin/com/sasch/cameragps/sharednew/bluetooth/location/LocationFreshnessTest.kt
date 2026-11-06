@@ -157,12 +157,14 @@ class LocationFreshnessTest {
         val source = Source()
         val port = Port()
         val ready = mutableSetOf("A")
+        var allowed = true
         var wallOffset = 0L
         private val clock = object : Clock {
             override fun now() = Instant.fromEpochMilliseconds(1_800_000_000_000 + test.testScheduler.currentTime + wallOffset)
         }
         val manager = LocationTransmissionManager(source, { ready }, { null }, port,
-            test.backgroundScope, policy = policy, clock = clock, timeSource = test.testScheduler.timeSource)
+            test.backgroundScope, isTransmissionAllowed = { allowed }, policy = policy,
+            clock = clock, timeSource = test.testScheduler.timeSource)
 
         fun start() { manager.onDeviceReady("A"); test.runCurrent() }
         fun fix(age: Long = 0) = GeoLocation(52.52, 13.405, 5.0, clock.now().toEpochMilliseconds() - age)
@@ -174,7 +176,13 @@ class LocationFreshnessTest {
         override val failures = MutableSharedFlow<Unit>()
         var starts = 0
         var stops = 0
-        override fun start(): Boolean { starts++; return true }
+        var canStart = true
+        var registrationFailure: Exception? = null
+        override fun start(): Boolean {
+            starts++
+            registrationFailure?.let { throw it }
+            return canStart
+        }
         override fun stop() { stops++ }
         override fun hasPreciseAuthorization() = true
     }

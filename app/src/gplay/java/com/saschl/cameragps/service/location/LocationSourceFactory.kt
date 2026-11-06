@@ -8,6 +8,7 @@ import com.saschl.cameragps.utils.PreferencesManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
 /** The gplay flavor lets the user pick between Play Services and the platform provider. */
 const val LOCATION_PROVIDER_SELECTABLE = true
@@ -33,11 +34,16 @@ private class SwitchingLocationSource(
     private var active: LocationSource? = null
 
     override val failures: Flow<Unit> = flow {
-        fused.failures.collect {
+        merge<LocationSource>(fused.failures.map { fused }, platform.failures.map { platform }).collect { failed ->
+            if (active !== failed) return@collect
             if (active === fused) {
                 fused.stop()
                 active = platform.takeIf { it.start() }
                 if (active == null) emit(Unit)
+            } else if (active === platform) {
+                platform.stop()
+                active = null
+                emit(Unit)
             }
         }
     }

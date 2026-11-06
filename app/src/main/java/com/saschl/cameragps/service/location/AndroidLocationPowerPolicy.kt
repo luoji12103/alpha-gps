@@ -23,5 +23,7 @@ internal object AndroidLocationPowerPolicy {
         resendIntervalMs = SonyBluetoothConstants.LOCATION_UPDATE_INTERVAL_MS,
         maxFixAgeMs = MAX_FIX_AGE_MS,
         preferNewestFix = true,
+        sourceRetryInitialDelayMs = 30_000L,
+        sourceRetryMaxDelayMs = 300_000L,
     )
 }

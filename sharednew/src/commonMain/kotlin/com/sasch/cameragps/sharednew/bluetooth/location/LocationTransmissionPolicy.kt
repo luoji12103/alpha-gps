@@ -9,8 +9,12 @@ data class LocationTransmissionPolicy(
     val minSendIntervalMs: Long = 0L,
     val sendOnUpdate: Boolean = false,
     val preferNewestFix: Boolean = false,
+    /** Disabled by default; Android enables bounded registration-failure recovery. */
+    val sourceRetryInitialDelayMs: Long = 0L,
+    val sourceRetryMaxDelayMs: Long = 300_000L,
 ) {
     init {
         require(resendIntervalMs > 0 && maxFixAgeMs > 0 && minSendIntervalMs >= 0)
+        require(sourceRetryInitialDelayMs >= 0 && sourceRetryMaxDelayMs >= sourceRetryInitialDelayMs)
     }
 }
