@@ -51,7 +51,9 @@
 
 本轮新增 13 项协议 / 解析测试，覆盖载荷边界、版本、不可信 APDU、读取不暂停、提交只执行一次、暂停完成前不确认、失败 / 过期 / 取消、接触中断重试和不同接收端无法复用。另增加两项共享层回归，验证释放端点不会重启位置握手，以及其他相机仍可继续定位。
 
-全部测试为共享层 429 项、Android 34 项，合计 **463 项**。最终正式版构建、完整 lint、Google Play Kotlin 编译结果和 APK 大小以交付目录的 `BUILD-INFO.json`、日志为准；交付前会校验签名、ZIP / ELF 16 KiB 对齐与补丁回放。
+全部测试为共享层 429 项、Android 34 项，合计 **463 项通过，0 失败 / 错误 / 跳过**。FOSS release 构建、完整 lint 和 Google Play Kotlin 编译通过；lint 为 0 错误、18 项原有非阻断警告。APK 为 8,032,500 字节 / 7.66 MiB，比前一版增加 45,112 字节，约 44 KiB。
+
+已校验同一本地签名、ZIP 完整性、ZIP / ELF 16 KiB 对齐，确认仅新增普通 NFC 权限，NFC / HCE 硬件要求均为可选。构建摘要、测试 XML、签名、补丁回放和校验值见交付目录的 `BUILD-INFO.json` 及原始日志。
 
 ```bash
 ANDROID_HOME=/home/luoji/Android/Sdk ./gradlew \
