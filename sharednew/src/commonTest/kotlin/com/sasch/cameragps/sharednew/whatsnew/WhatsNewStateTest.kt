@@ -8,6 +8,60 @@ import kotlin.test.assertTrue
 
 class WhatsNewStateTest {
     @Test
+    fun powerUpgradeShowsOwnNotesAndPersistsDismissal() {
+        var stored = "1.7.2"
+        val state = WhatsNewState("v1.7.2+power.1", ReleasePlatform.Android, stored, false) { stored = it }
+        state.initialize()
+        assertTrue(state.pending)
+        assertEquals("1.7.2+power.1", state.release?.version)
+        assertEquals(3, state.release!!.highlights.size)
+        state.dismiss()
+        assertEquals("1.7.2+power.1", stored)
+        assertFalse(WhatsNewState("v1.7.2+power.1", ReleasePlatform.Android, stored, false) {}.pending)
+    }
+
+    @Test
+    fun powerFreshInstallRecordsFullVersionSilently() {
+        var stored: String? = null
+        val state = WhatsNewState("v1.7.2+power.1", ReleasePlatform.Android, stored, true) { stored = it }
+        state.initialize()
+        assertFalse(state.pending)
+        assertEquals("1.7.2+power.1", stored)
+    }
+
+    @Test
+    fun powerRevisionsCompareNumericallyWithinOfficialVersion() {
+        assertTrue(WhatsNewPolicy.isNewer("v1.7.2+power.10", "1.7.2+power.9"))
+        assertFalse(WhatsNewPolicy.isNewer("1.7.2+power.1", "1.7.2+power.2"))
+        assertFalse(WhatsNewPolicy.isNewer("1.7.2", "1.7.2+power.1"))
+        assertTrue(WhatsNewPolicy.isNewer("1.7.3+power.1", "1.7.2+power.99"))
+        assertTrue(WhatsNewPolicy.isNewer("1.7.3", "1.7.2+power.99"))
+        assertFalse(WhatsNewPolicy.isNewer("1.7.2+power.99", "1.7.3"))
+    }
+
+    @Test
+    fun powerDowngradeDoesNotEraseNewerHistory() {
+        var stored = "1.7.2+power.2"
+        val state = WhatsNewState("1.7.2+power.1", ReleasePlatform.Android, stored, false) { stored = it }
+        state.initialize()
+        state.dismiss()
+        assertFalse(state.pending)
+        assertEquals("1.7.2+power.2", stored)
+    }
+
+    @Test
+    fun invalidMetadataCannotBecomeReleaseBaseline() {
+        for (version in listOf("1.7.2+power.0", "1.7.2+power.-1", "1.7.2+other.1", "1.7.2+power.1+bad")) {
+            assertFalse(WhatsNewPolicy.isNewer(version, null))
+        }
+    }
+
+    @Test
+    fun powerReleaseNotesDoNotAdvertiseAndroidFeaturesOnIos() {
+        assertNull(ReleaseNotesCatalog.forVersion("v1.7.2+power.1", ReleasePlatform.Ios))
+    }
+
+    @Test
     fun existingInstallWithoutTrackingSeesNotesUntilDismissed() {
         var stored: String? = null
         fun launch() =

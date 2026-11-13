@@ -11,6 +11,10 @@
 local.properties
 *.aab
 *.apk
+*.idsig
+*.jks
+*.p12
+*.keystore
 .kotlin
 shared/build
 
@@ -85,3 +89,8 @@ fastlane/test_output
 /artifacts/app-store/
 
 camerasim
+
+# Website build output and dependencies
+website/node_modules/
+website/dist/
+website/.astro/

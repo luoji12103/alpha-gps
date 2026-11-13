@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="whats_new_power_1_location">Power edition: requests a new location every minute and refreshes valid coordinates to Sony every five seconds. Samples expire after 90 seconds.</string>
+    <string name="whats_new_power_1_nfc">New in Settings: manual camera handoff between Android devices over NFC, plus writable NFC tags for camera connection.</string>
+    <string name="whats_new_power_1_scope">Automatic battery-based switching is not included. NFC and camera handoff still need physical-device verification. Both devices must pair with the camera separately.</string>
+</resources>

@@ -170,3 +170,18 @@ a {
 }
 
 
+
+.eyebrow { color: #9cd0ff; letter-spacing: 0.12em; font-size: 0.85rem; }
+.hero h1 { font-size: clamp(2rem, 6vw, 3.3rem); letter-spacing: -0.03em; }
+.accent { color: #9cd0ff; }
+.release-badge { display: inline-block; border: 1px solid #356943; border-radius: 6px; padding: 0.15rem 0.5rem; color: #b5e6be; margin: 0 0.5rem 0.4rem 0; }
+.fine-print { font-size: 0.9rem; margin-bottom: 0; }
+.steps { padding-left: 1.4rem; }
+.steps li, .spaced-list li { margin: 0.5rem 0; }
+.card p { margin-bottom: 0; }
+.faq details { border-top: 1px solid var(--border); padding: 0.85rem 0; }
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq details p { margin-top: 0.65rem; color: var(--muted); }
+code { overflow-wrap: anywhere; }
+a:focus-visible, summary:focus-visible { outline: 2px solid #9cd0ff; outline-offset: 4px; }
+@media (max-width: 420px) { .actions .button { width: 100%; text-align: center; } }

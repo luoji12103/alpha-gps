@@ -2,6 +2,7 @@ import io.sentry.android.gradle.sourcecontext.UploadSourceBundleTask
 import io.sentry.android.gradle.tasks.SentryUploadNativeSymbolsTask
 import io.sentry.android.gradle.tasks.SentryUploadProguardMappingsTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -15,6 +16,10 @@ plugins {
 
 room {
     schemaDirectory("$projectDir/schemas")
+}
+
+val releaseProperties = Properties().apply {
+    rootProject.file("release.properties").inputStream().use { load(it) }
 }
 
 android {
@@ -49,8 +54,9 @@ android {
         applicationId = "com.saschl.cameragps"
         minSdk = 26
         targetSdk = 37
-        versionCode = 172
-        versionName = "v1.7.2"
+        versionCode = releaseProperties.getProperty("versionCode").toInt()
+        versionName = "v${releaseProperties.getProperty("upstreamVersion")}+" +
+            "${releaseProperties.getProperty("edition")}.${releaseProperties.getProperty("revision")}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

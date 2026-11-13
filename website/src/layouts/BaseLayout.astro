@@ -7,6 +7,7 @@ interface Props {
   image?: string;
   jsonLd?: Record<string, unknown> | Array<Record<string, unknown>>;
   noindex?: boolean;
+  lang?: string;
   /** App Store id; shows Safari's Smart App Banner on iPhone. */
   appleAppId?: string;
   nav?: {
@@ -15,17 +16,18 @@ interface Props {
     logoSrc?: string;
     repoUrl: string;
     issuesUrl: string;
-    starsBadgeUrl: string;
-    forksBadgeUrl: string;
+    starsBadgeUrl?: string;
+    forksBadgeUrl?: string;
   };
 }
 
 const {
   title,
   description,
-  image = "/seo/og-image.svg",
+  image = `${import.meta.env.BASE_URL.replace(/\/?$/, "/")}seo/og-image.svg`,
   jsonLd,
   noindex = false,
+  lang = "en",
   appleAppId,
   nav
 } = Astro.props;
@@ -35,13 +37,13 @@ const ogImageUrl = new URL(image, Astro.site ?? Astro.url).toString();
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang={lang}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href={`${import.meta.env.BASE_URL.replace(/\/?$/, "/")}icon.svg`} type="image/svg+xml" />
     <link rel="canonical" href={canonicalUrl} />
     <meta name="robots" content={noindex ? "noindex, nofollow" : "index, follow"} />
     <meta name="theme-color" content="#0d1117" />
@@ -72,14 +74,14 @@ const ogImageUrl = new URL(image, Astro.site ?? Astro.url).toString();
           </a>
 
           <nav class="topbar-links" aria-label="GitHub links">
-            <a href={nav.repoUrl}>Repository</a>
-            <a href={nav.issuesUrl}>Issues</a>
-            <a href={`${nav.repoUrl}/stargazers`} aria-label="GitHub stars">
+            <a href={nav.repoUrl}>仓库</a>
+            <a href={nav.issuesUrl}>问题反馈</a>
+            {nav.starsBadgeUrl && <a href={`${nav.repoUrl}/stargazers`} aria-label="GitHub stars">
               <img src={nav.starsBadgeUrl} alt="GitHub stars" />
-            </a>
-            <a href={`${nav.repoUrl}/forks`} aria-label="GitHub forks">
+            </a>}
+            {nav.forksBadgeUrl && <a href={`${nav.repoUrl}/forks`} aria-label="GitHub forks">
               <img src={nav.forksBadgeUrl} alt="GitHub forks" />
-            </a>
+            </a>}
           </nav>
         </div>
       </header>

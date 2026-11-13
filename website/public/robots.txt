@@ -1,5 +1,5 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://alphagps.app/sitemap-index.xml
+Sitemap: https://luoji12103.github.io/alpha-gps/sitemap-index.xml
 

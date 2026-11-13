@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="whats_new_power_1_location">Power 版：每分钟请求新位置，每 5 秒向索尼刷新有效坐标；真实样本超过 90 秒后停止重发。</string>
+    <string name="whats_new_power_1_nfc">设置中新增 NFC 设备手动交接与相机标签读写。手机、平板需分别配对相机后再交接。</string>
+    <string name="whats_new_power_1_scope">本版尚未包含按电量自动切换。NFC 碰靠与相机接管仍需实机验证。</string>
+</resources>

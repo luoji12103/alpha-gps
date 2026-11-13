@@ -1,130 +1,73 @@
 ---
+import { readFileSync } from "node:fs";
 import BaseLayout from "../layouts/BaseLayout.astro";
 
-const repoUrl = "https://github.com/Saschl/alpha-gps";
-const playStoreUrl = "https://play.google.com/store/apps/details?id=com.saschl.cameragps";
-const fdroidUrl = "https://f-droid.org/packages/com.saschl.cameragps/";
-const appStoreId = "6760982303";
-const appStoreUrl = `https://apps.apple.com/us/app/alpha-gps-camera-geotagging/id${appStoreId}`;
-const releasesUrl = "https://github.com/Saschl/alpha-gps/releases";
-const issuesUrl = "https://github.com/Saschl/alpha-gps/issues";
-const weblateUrl = "https://hosted.weblate.org/engage/alpha-gps/";
-const privacyUrl = "https://github.com/Saschl/alpha-gps/blob/main/privacy.md";
-const supportUrl = "https://buymeacoffee.com/wj8tism4dq";
+// npm runs from website/. Share the Android release manifest; no release API at runtime.
+const release = Object.fromEntries(
+  readFileSync("../release.properties", "utf8").split(/\r?\n/)
+    .map((line) => line.trim()).filter((line) => line && !line.startsWith("#"))
+    .map((line) => line.split("=", 2))
+);
+const version = `v${release.upstreamVersion}+${release.edition}.${release.revision}`;
+const repoUrl = "https://github.com/luoji12103/alpha-gps";
+const upstreamUrl = "https://github.com/Saschl/alpha-gps";
+const releasesUrl = `${repoUrl}/releases/tag/${encodeURIComponent(version)}`;
+const downloadUrl = `${repoUrl}/releases/latest/download/AlphaGPS-power-arm64.apk`;
+const guideUrl = `${repoUrl}/blob/main/docs/audits/2026-11-06-nfc-handoff.md`;
+const base = import.meta.env.BASE_URL.replace(/\/?$/, "/");
 const topNav = {
-  brand: "Alpha GPS",
-  homeUrl: "/",
-  logoSrc: "/icon.svg",
+  brand: "Alpha GPS · Power",
+  homeUrl: base,
+  logoSrc: `${base}icon.svg`,
   repoUrl,
-  issuesUrl,
-  starsBadgeUrl: "https://img.shields.io/github/stars/Saschl/alpha-gps?style=for-the-badge&logo=github&cacheSeconds=7200",
-  forksBadgeUrl: "https://img.shields.io/github/forks/Saschl/alpha-gps?style=for-the-badge&logo=github"
+  issuesUrl: `${repoUrl}/issues`
 };
-
-// Confirmed by user reports. Keep in sync with "Which cameras are supported?"
-// in the repo README.
-const confirmedCameras = [
-  { name: "A1", code: "ILCE-1" },
-  { name: "A7 III", code: "ILCE-7M3", report: "260" },
-  { name: "A7 IV", code: "ILCE-7M4", report: "301" },
-  { name: "A7 V", code: "ILCE-7M5", report: "79" },
-  { name: "A7C II", code: "ILCE-7CM2", note: "Confirmed by email." },
-  { name: "A7R III", code: "ILCE-7RM3", report: "95#issuecomment-5609520240", note: "Enable Location Info. Link in the camera menu." },
-  { name: "A7R V", code: "ILCE-7RM5", report: "199" },
-  { name: "A99 II", code: "ILCA-99M2", report: "294", note: "GPS confirmed; remote control, time correction and area adjustment were disabled in the report." },
-  { name: "A6400", code: "ILCE-6400", report: "195" },
-  { name: "A6500", code: "ILCE-6500", report: "301", note: "Geotagging confirmed; other features are limited by the camera's capabilities." },
-  { name: "A6700", code: "ILCE-6700", report: "294" },
-  { name: "A6100", code: "ILCE-6100A", report: "313" },
-  { name: "ZV-1", code: "ZV-1", report: "100" },
-  { name: "ZV-E10", code: "ZV-E10", report: "67#issuecomment-3678222970" }
-];
-const confirmedCameraNames = confirmedCameras.map((camera) => camera.name).join(", ");
-
-const minIos = "iOS 18.0";
-const minAndroid = "Android 8.0";
-const features = [
-  "Automatic GPS geotagging over Bluetooth",
-  "Automatic reconnect when the camera is switched on",
-  "Location updates in the background and with the phone locked",
-  "Camera date, time and time zone sync",
-  "Bluetooth remote shutter"
-];
-
-// Rendered on the page and as FAQPage JSON-LD, so both always say the same.
 const faq = [
   {
-    question: "Does Alpha GPS work on iPhone?",
-    answer: `Yes. Alpha GPS is on the App Store for iPhone (${minIos} or later) and on Google Play and F-Droid for Android (${minAndroid} or later). Both versions are free.`
+    question: "Power 版与官方有什么关系？",
+    answer: `这是 Alpha GPS 的独立 Android fork，保留原项目署名和 GPL-3.0 许可。本版基于官方源码 ${release.upstreamVersion}，加入定位省电策略、恢复修复与 NFC 功能。官方最新已发布版本目前为 v1.7.1；本版使用的是其后续开发源码，不表示官方已经发布 v1.7.2。`
   },
   {
-    question: "Which Sony cameras are supported?",
-    answer: `Any Sony camera that supports Bluetooth location linking with Imaging Edge Mobile or Creators' App should work. GPS geotagging has been confirmed by users on: ${confirmedCameraNames}. Remote shutter and time-sync options depend on the camera model. Wi-Fi-only models such as the A6000 cannot use Bluetooth geotagging.`
+    question: "为什么每分钟定位，还要每 5 秒发送？",
+    answer: "获取新位置与蓝牙刷新相机是两件事。本版请求每 60 秒采样一次，在有效期内每 5 秒重发坐标，并刷新发送时间。真实位置样本超过 90 秒即停止重发。Sony 没有公开所有机型通用的最大刷新间隔，5 秒是当前策略，仍需用你的相机验证。"
   },
   {
-    question: "Does it keep geotagging in the background?",
-    answer: "Yes. Pair the camera once, and Alpha GPS reconnects automatically whenever you switch the camera on. It keeps sending location while the app is in the background and the phone is locked."
+    question: "会根据手机或平板电量自动切换吗？",
+    answer: "目前不会。本版支持 NFC 手动交接；持续设备协调、在线状态检测与按电量自动选择设备仍待实现。NFC 交接后，接收设备独立获取位置，并直接通过蓝牙发给相机。"
   },
   {
-    question: "How is it different from Sony Creators' App or Imaging Edge Mobile?",
-    answer: "Alpha GPS is built around one job: keeping location data on your photos. It reconnects on its own, can sync the camera clock and trigger the shutter, and is open source with no ads and no account. Image transfer is planned as an addition, but reliable geotagging stays the focus. Until then, keep using Sony's app to copy photos to your phone."
+    question: "没有 NFC 的设备可以用吗？",
+    answer: "可以继续使用原有定位和蓝牙功能。两台设备交接时，发送端需要 NFC HCE，接收端需要兼容的读卡能力；双方都要先单独配对相机。"
   },
   {
-    question: "Can I use a camera that was set up with Creators' App before?",
-    answer: "Usually yes. Just pair it in Alpha GPS. If Alpha GPS connects but the camera doesn't receive location, remove the camera from your phone's Bluetooth settings and from the Sony app, then pair it again in Alpha GPS."
+    question: "NFC 标签会让旧手机停止发送吗？",
+    answer: "不会。普通相机标签只用于打开本机连接确认页。要暂停旧设备，请使用两台设备的交接流程，或先手动停用旧设备。"
   },
   {
-    question: "Is Alpha GPS free?",
-    answer: "Yes. It is free, open source and has no ads. Your location is only used to geotag photos on your camera, and crash reports are only sent if you allow them."
+    question: "能覆盖安装之前的试用包吗？",
+    answer: "可以覆盖本项目之前使用同一本地签名的试用 APK，正式版内部版本号为 173。官方商店与 F-Droid 版本签名不同，无法直接覆盖；卸载原版会清除应用数据，可能需要重新配对。"
   }
 ];
-
-// One entry per store: a combined "Android, iOS" entry with two download URLs
-// can't say which listing belongs to which platform. The same goes for the
-// store pages in sameAs.
-const appJsonLd = {
-  "@context": "https://schema.org",
-  "@type": "MobileApplication",
-  name: "Alpha GPS for Geotagging",
-  applicationCategory: "PhotographyApplication",
-  description:
-    "Open-source Sony camera geotagging app that transmits GPS coordinates from your phone to your camera.",
-  url: "https://alphagps.app/",
-  sameAs: [repoUrl, releasesUrl],
-  featureList: features,
-  offers: {
-    "@type": "Offer",
-    price: "0",
-    priceCurrency: "USD"
-  },
-  publisher: {
-    "@type": "Person",
-    name: "Saschl"
-  }
-};
 const jsonLd = [
   {
-    ...appJsonLd,
+    "@context": "https://schema.org",
+    "@type": "MobileApplication",
+    name: "Alpha GPS Power",
     operatingSystem: "Android",
-    softwareRequirements: `${minAndroid} or later`,
-    downloadUrl: playStoreUrl,
-    installUrl: playStoreUrl,
-    sameAs: [...appJsonLd.sameAs, playStoreUrl, fdroidUrl]
-  },
-  {
-    ...appJsonLd,
-    operatingSystem: "iOS",
-    softwareRequirements: `${minIos} or later`,
-    downloadUrl: appStoreUrl,
-    installUrl: appStoreUrl,
-    sameAs: [...appJsonLd.sameAs, appStoreUrl]
+    softwareRequirements: "Android 8.0+, ARM64",
+    softwareVersion: version,
+    applicationCategory: "PhotographyApplication",
+    description: "独立 Android fork：索尼相机位置刷新、省电策略与 NFC 手动设备交接。",
+    downloadUrl,
+    url: "https://luoji12103.github.io/alpha-gps/",
+    isBasedOn: upstreamUrl,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" }
   },
   {
     "@context": "https://schema.org",
     "@type": "FAQPage",
-    mainEntity: faq.map(({ question, answer }) => ({
-      "@type": "Question",
-      name: question,
+    mainEntity: faq.map(({question, answer}) => ({
+      "@type": "Question", name: question,
       acceptedAnswer: { "@type": "Answer", text: answer }
     }))
   }
@@ -132,153 +75,84 @@ const jsonLd = [
 ---
 
 <BaseLayout
-  title="Alpha GPS – Sony Camera Geotagging App for iPhone & Android"
-  description="Free, open-source app that sends your phone's GPS location to your Sony camera over Bluetooth to geotag every photo. For iPhone and Android, no ads."
+  title={`Alpha GPS Power · ${version} · 索尼相机定位与 NFC 交接`}
+  description="Alpha GPS 独立 Android 分支：每分钟请求定位、持续刷新有效坐标，支持 NFC 手动设备交接与相机标签。"
+  lang="zh-CN"
   jsonLd={jsonLd}
-  appleAppId={appStoreId}
   nav={topNav}
 >
   <section class="hero">
-    <h1>Alpha GPS for Geotagging</h1>
-    <p class="lead">
-      Open-source geotagging for Sony cameras, on iPhone and Android. Pair once
-      and automatically get accurate GPS coordinates for your photos.
-    </p>
+    <p class="eyebrow">轻量化 · 低功耗 · 稳定</p>
+    <h1>Alpha GPS <span class="accent">Power</span></h1>
+    <p class="lead">用更少的定位请求，持续刷新相机坐标。<br />为索尼相机准备的 Android 分支，加入手机与平板的 NFC 手动交接。</p>
+    <p><span class="release-badge">正式版 {version}</span> <span class="muted">Android 8.0+ · ARM64 · FOSS</span></p>
     <div class="actions">
-      <a class="button" href={playStoreUrl}>Get it on Google Play</a>
-      <a class="button" href={appStoreUrl}>Download on the App Store</a>
-      <a class="button" href={fdroidUrl}>Get it on F-Droid</a>
-      <a class="button ghost" href={releasesUrl}>APK Releases</a>
+      <a class="button" href={downloadUrl}>下载 Android APK</a>
+      <a class="button ghost" href={releasesUrl}>发布说明与校验值</a>
+      <a class="button ghost" href={guideUrl}>NFC 使用说明</a>
     </div>
+    <p class="muted fine-print">独立维护，源自 <a href={upstreamUrl}>Saschl/alpha-gps</a>。此安装包的增强功能未通过官方商店分发。</p>
   </section>
 
-  <section>
-    <h2>Why people use it</h2>
+  <section id="features">
+    <h2>这次带来的变化</h2>
     <div class="grid">
       <article class="card">
-        <h3>Reliable background updates</h3>
-        <p>
-          Uses platform-specific mechanisms to keep location updates running in the background, even with aggressive battery optimizations.
-        </p>
+        <h3>少一些重复定位</h3>
+        <p>每分钟请求一个新位置，把定位采样和相机刷新分开。没有相机需要定位时，释放定位资源。</p>
       </article>
       <article class="card">
-        <h3>Works with supported Sony models</h3>
-        <p>
-          Built for cameras that work with Imaging Edge or Sony Creators' app,
-          with confirmed reports including {confirmedCameraNames}.
-          <a href="#cameras">See supported cameras</a>.
-        </p>
+        <h3>有效坐标持续刷新</h3>
+        <p>目标每 5 秒向 Sony 蓝牙链路刷新一次，允许重复有效坐标；真实样本超过 90 秒后停止重发。</p>
       </article>
       <article class="card">
-        <h3>Practical troubleshooting</h3>
-        <p>
-          Includes logs, recovery options, and an optional always-on mode for
-          tricky vendor-specific Android behavior.
-        </p>
+        <h3>设备碰一碰交接</h3>
+        <p>先读取、确认，再碰一次。旧设备先暂停这台相机并关闭本地连接，新设备再尝试接管。</p>
+      </article>
+      <article class="card">
+        <h3>相机标签快捷连接</h3>
+        <p>支持 NFC 标签读写。给相机贴一枚自己的可写标签，触碰并确认，即可请求连接已配对的相机。</p>
       </article>
     </div>
   </section>
 
-  <section>
-    <h2>On iPhone and Android</h2>
-    <p>
-      Alpha GPS runs on iPhones with {minIos} or later and on Android phones
-      with {minAndroid} or later. Features on both:
-    </p>
-    <ul>
-      {features.map((feature) => <li>{feature}</li>)}
-    </ul>
+  <section id="nfc">
+    <h2>手机、平板怎么配合</h2>
+    <p>入口：<strong>设置 → NFC 设备交接与相机标签</strong>。两台 Android 设备分别配对同一台相机，开启 NFC，保持解锁和页面在前台。</p>
+    <ol class="steps">
+      <li>旧设备选择相机，开启转交；新设备选择接收。</li>
+      <li>碰一次读取相机，新设备确认后，再次贴近旧设备。</li>
+      <li>旧设备暂停并关闭本地连接后，新设备请求连接。回到设备列表检查位置，并用原图 EXIF 核对结果。</li>
+    </ol>
+    <p>交接成功暂停后，旧设备不会因重启或相机重新出现而自动抢回。接收端连接失败时，检查两端状态，再手动恢复旧设备。</p>
+    <p class="muted">相机标签只触发连接，不能暂停另一部手机。金属机身附近建议使用抗金属 NFC 标签。<a href={guideUrl}>查看完整步骤与硬件要求 →</a></p>
   </section>
 
-  <section id="cameras">
-    <h2>Supported cameras</h2>
-    <p>
-      Alpha GPS works with Sony cameras that support Bluetooth location linking
-      with Imaging Edge Mobile or Creators' App. It uses
-      the same Bluetooth location feature, so if Sony's app can geotag your
-      camera, Alpha GPS should too.
-    </p>
-    <p>GPS geotagging confirmed by users so far:</p>
-    <ul>
-      {confirmedCameras.map((camera) => (
-        <li>
-          {camera.report ? <a href={`${issuesUrl}/${camera.report}`}>{camera.name}</a> : camera.name}
-          {camera.code !== camera.name && <span class="muted"> ({camera.code})</span>}
-          {camera.note && <> — {camera.note}</>}
-        </li>
-      ))}
+  <section id="status">
+    <h2>本版范围与验证</h2>
+    <ul class="spaced-list">
+      <li><strong>已实现：</strong>定位与发送节奏分离、有界恢复、NFC 手动交接和相机标签读写。</li>
+      <li><strong>待开发：</strong>设备间持续协调，以及按电量或在线状态自动切换。</li>
+      <li><strong>已验证：</strong>自动测试、FOSS Release 构建、静态检查和安装包签名。</li>
+      <li><strong>待实测：</strong>NFC 物理交换、Sony 相机接管、照片 EXIF 和实际耗电；暂不承诺无缝交接或具体续航提升。</li>
     </ul>
-    <p>
-      Remote shutter and time-sync options depend on the camera model. These
-      reports confirm geotagging, not every feature. Wi-Fi-only models such as
-      the <a href={`${issuesUrl}/236`}>A6000</a> cannot use Bluetooth geotagging.
-    </p>
-    <p class="muted">
-      Using a camera that isn't listed? <a href={issuesUrl}>Let us know</a> whether
-      it works, so it can be added.
-    </p>
+    <p>支持具备蓝牙位置链接的 Sony 相机。<a href={`${upstreamUrl}#which-cameras-are-supported`}>上游兼容机型记录</a>可供参考，具体效果仍取决于机型、权限和 Android 后台行为。</p>
   </section>
 
   <section id="faq" class="faq">
-    <h2>Frequently asked questions</h2>
-    {faq.map(({ question, answer }) => (
-      <>
-        <h3>{question}</h3>
-        <p>{answer}</p>
-      </>
-    ))}
+    <h2>常见问题</h2>
+    {faq.map(({question, answer}) => <details><summary>{question}</summary><p>{answer}</p></details>)}
   </section>
 
   <section>
-    <h2>Open source, community built</h2>
-    <p>
-      Alpha GPS is fully open source. You can inspect code, open issues, propose
-      improvements, and help localize the app. No paywalls, no ads, no data selling.
-    </p>
+    <h2>保持简单，方便长期维护</h2>
+    <p>本次发布仅提供 ARM64 FOSS 安装包：不含 Google Play 服务或 Sentry。NFC 没有新增第三方 SDK，也没有新增常驻读卡扫描；读卡仅在操作时开启，离开页面或等待超时后关闭。</p>
+    <p>版本格式为 <code>官方源码版本 + power.修订号</code>。增强版更新递增修订号，同步官方时更新基础版本；Android 内部版本号独立递增，保证覆盖安装。</p>
     <div class="actions">
-      <a class="button" href={repoUrl}>Source Code</a>
-      <a class="button ghost" href={issuesUrl}>Issue Tracker</a>
-      <a class="button ghost" href={weblateUrl}>Translate on Weblate</a>
+      <a class="button ghost" href={repoUrl}>源码与构建</a>
+      <a class="button ghost" href={`${repoUrl}/issues`}>反馈问题</a>
+      <a class="button ghost" href={`${repoUrl}/blob/main/docs/versioning.md`}>版本与发布规则</a>
     </div>
-  </section>
-
-  <section>
-    <h2>Privacy first</h2>
-    <ul>
-      <li>No advertising or data selling.</li>
-      <li>Location is used only for live geotag transfer to your camera.</li>
-      <li>Crash diagnostics are optional and focused on fixing technical issues.</li>
-      <li>You can disable troubleshooting reporting in app settings at any time.</li>
-    </ul>
-    <p class="muted">
-      Full details: <a href={privacyUrl}>Privacy Policy</a>
-    </p>
-  </section>
-
-  <section>
-    <h2>Error monitoring with Sentry</h2>
-    <a href="https://sentry.io/">
-      <img src="/branding/sentry-light.svg" width="200" height="60" alt="Sentry" loading="lazy" />
-    </a>
-    <p>
-      Alpha GPS uses <a href="https://sentry.io/">Sentry</a> for error monitoring.
-      The iOS and Google Play versions use Sentry for
-      crash reports and diagnostic logs to help find and fix bugs. Reporting is
-      opt-in and can be disabled in settings at any time. The F-Droid version
-      does not include Sentry.
-    </p>
-  </section>
-
-  <section>
-    <h2>Support the project</h2>
-    <p>
-      If Alpha GPS helps your photo workflow, support ongoing development and
-      maintenance.
-    </p>
-    <div class="actions">
-      <a class="button" href={supportUrl}>Buy Me a Coffee</a>
-    </div>
-    <small>Made by Saschl and contributors.</small>
+    <p class="muted fine-print">原作者 Saschl 与贡献者 · Power 分支由本仓库维护 · <a href={`${repoUrl}/blob/main/LICENSE`}>GPL-3.0</a> · <a href={`${repoUrl}/blob/main/privacy.md`}>上游隐私说明</a></p>
   </section>
 </BaseLayout>
-
