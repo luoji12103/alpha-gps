@@ -3,7 +3,7 @@ name: Verify Android
 on:
   push:
     branches: [main]
-    tags: ['v*+power.*']
+    tags: ['v*']
     paths-ignore: ['website/**', '**/*.md']
   pull_request:
     paths-ignore: ['website/**', '**/*.md']
